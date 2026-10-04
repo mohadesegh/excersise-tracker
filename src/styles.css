@@ -161,6 +161,36 @@ html[dir="rtl"] .lang-switcher {
 html[dir="ltr"] .lang-switcher {
 	justify-content: flex-end;
 }
+.lang-switcher {
+	align-items: center;
+	gap: 8px;
+}
+/* the install button sits at the far side from the language menu */
+.install-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-height: 42px;
+	padding: 8px 14px;
+	border: 0;
+	border-radius: 14px;
+	background: var(--tint);
+	box-shadow: inset 0 0 0 1.5px var(--saffron);
+	color: var(--ink);
+	font-weight: 700;
+	white-space: nowrap;
+	cursor: pointer;
+}
+.install-btn[hidden] {
+	display: none;
+}
+html[dir="rtl"] .install-btn {
+	order: 1;
+	margin-inline-start: auto;
+}
+html[dir="ltr"] .install-btn {
+	margin-inline-end: auto;
+}
 .lang-picker {
 	position: relative;
 	display: inline-block;

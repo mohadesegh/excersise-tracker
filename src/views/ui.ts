@@ -8,6 +8,13 @@ import {
 } from "../i18n";
 import { state } from "../store";
 import { Mannequin, type MannequinOptions } from "../engine/mannequin";
+import {
+	canInstall,
+	install,
+	isIOS,
+	isStandalone,
+	onInstallChange,
+} from "../pwa";
 import { fa } from "../utils";
 
 export type Cleanup = () => void;
@@ -58,8 +65,18 @@ export function langSwitcherHTML(locale: Locale = getLocale()): string {
 			: locale === "tr"
 				? "Dil seçimi"
 				: "Select language";
+	const installLabel =
+		locale === "fa"
+			? "نصب اپ"
+			: locale === "tr"
+				? "Uygulamayı kur"
+				: "Install app";
 	return `
     <div class="lang-switcher">
+      <button type="button" class="install-btn" data-install hidden>
+        <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0l-4.5-4.5M12 15l4.5-4.5M5 19.5h14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>${installLabel}</span>
+      </button>
       <div class="lang-picker" data-locale-picker>
         <button type="button" class="lang-select" data-locale-toggle aria-haspopup="true" aria-expanded="false" aria-label="${label}">
           <span class="lang-current">
@@ -84,12 +101,50 @@ export function langSwitcherHTML(locale: Locale = getLocale()): string {
     </div>`;
 }
 
+/**
+ * The "install app" button next to the language menu. It shows when the
+ * browser offers installation, and on iPhones (where it explains the Share
+ * menu, the only way to install there); never inside the installed app.
+ */
+function bindInstallButton(root: HTMLElement): Cleanup {
+	const btn = root.querySelector<HTMLButtonElement>("[data-install]");
+	if (!btn) return () => {};
+	const locale = getLocale();
+	const refresh = () => {
+		btn.hidden = isStandalone() || !(canInstall() || isIOS());
+	};
+	refresh();
+	btn.addEventListener("click", async () => {
+		if (canInstall()) {
+			if (await install())
+				toast(
+					locale === "fa"
+						? "اپ نصب شد. حالا می‌توانی آفلاین هم تمرین کنی."
+						: locale === "tr"
+							? "Uygulama yüklendi. Artık çevrimdışı da antrenman yapabilirsin."
+							: "App installed. You can work out offline now.",
+				);
+			return;
+		}
+		toast(
+			locale === "fa"
+				? "در سافاری، دکمه‌ی اشتراک‌گذاری را بزن و «Add to Home Screen» را انتخاب کن."
+				: locale === "tr"
+					? "Safari’de paylaş düğmesine dokun ve «Ana Ekrana Ekle» seçeneğini seç."
+					: "In Safari, tap the share button and choose ‘Add to Home Screen’.",
+			5000,
+		);
+	});
+	return onInstallChange(refresh);
+}
+
 /** Wire up the language menu: it closes on choosing, on Escape, and on any tap outside it. */
 export function bindLangSwitcher(root: HTMLElement): Cleanup {
+	const offInstall = bindInstallButton(root);
 	const picker = root.querySelector<HTMLElement>("[data-locale-picker]");
 	const toggle = root.querySelector<HTMLButtonElement>("[data-locale-toggle]");
 	const menu = root.querySelector<HTMLElement>(".lang-menu");
-	if (!picker || !toggle || !menu) return () => {};
+	if (!picker || !toggle || !menu) return offInstall;
 
 	const setMenuOpen = (open: boolean) => {
 		menu.hidden = !open;
@@ -124,6 +179,7 @@ export function bindLangSwitcher(root: HTMLElement): Cleanup {
 	document.addEventListener("focusin", onOutside);
 	document.addEventListener("keydown", onKey);
 	return () => {
+		offInstall();
 		document.removeEventListener("pointerdown", onOutside, true);
 		document.removeEventListener("focusin", onOutside);
 		document.removeEventListener("keydown", onKey);
@@ -152,12 +208,12 @@ export function mountThumbs(root: ParentNode): Cleanup {
 	return () => ms.forEach((m) => m.destroy());
 }
 
-export function toast(text: string): void {
+export function toast(text: string, ms = 1800): void {
 	const el = document.createElement("div");
 	el.className = "toast";
 	el.setAttribute("role", "status");
 	el.textContent = text;
 	document.body.append(el);
-	setTimeout(() => el.classList.add("out"), 1800);
-	setTimeout(() => el.remove(), 2200);
+	setTimeout(() => el.classList.add("out"), ms);
+	setTimeout(() => el.remove(), ms + 400);
 }
