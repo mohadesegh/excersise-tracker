@@ -1,0 +1,6 @@
+# Add these lines to your project's supabase/config.toml (or set them in the dashboard).
+# The verify function is opened by the ZarinPal redirect in the user's browser,
+# which carries no Supabase login, so it must not require a JWT.
+# It is still safe: it only trusts what ZarinPal's own verify API confirms.
+[functions.verify]
+verify_jwt = false

@@ -1,0 +1,29 @@
+{
+	"name": "فیتورا: برنامه‌ی تمرینی شخصی",
+	"short_name": "فیتورا",
+	"description": "برنامه‌ی تمرینی شخصی با آموزش سه‌بعدی حرکت‌ها",
+	"lang": "fa",
+	"dir": "rtl",
+	"start_url": "/#/today",
+	"scope": "/",
+	"display": "standalone",
+	"orientation": "portrait",
+	"background_color": "#f3f5f8",
+	"theme_color": "#10233a",
+	"categories": ["health", "fitness", "lifestyle"],
+	"icons": [
+		{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+		{ "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+		{
+			"src": "/icons/icon-maskable-512.png",
+			"sizes": "512x512",
+			"type": "image/png",
+			"purpose": "maskable"
+		},
+		{ "src": "/icons/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+	],
+	"shortcuts": [
+		{ "name": "تمرین امروز", "url": "/#/today" },
+		{ "name": "حرکت‌ها", "url": "/#/library" }
+	]
+}
