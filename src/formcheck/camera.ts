@@ -203,8 +203,8 @@ export function openFormCheck({
 		ctx.clearRect(0, 0, w, h);
 		if (!lms) return;
 		const col = getComputedStyle(sheet);
-		const ok = col.getPropertyValue("--ok").trim() || "#1f8a5b";
-		const bad = col.getPropertyValue("--pom").trim() || "#d7364a";
+		const ok = col.getPropertyValue("--ok").trim() || "#0a9a5a";
+		const bad = col.getPropertyValue("--hot").trim() || "#e11d48";
 		ctx.lineWidth = Math.max(3, w / 160);
 		ctx.lineCap = "round";
 		for (const [a, b] of BONES) {
