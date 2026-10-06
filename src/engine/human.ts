@@ -131,6 +131,13 @@ export interface Fit {
   /** dressed as a woman: leggings, a coloured top and the hair tied up in a bun (centre and radius, rest pose) */
   female: boolean;
   bun: { c: Vec; r: number } | null;
+  /**
+   * per vertex, around a shoulder: how much it turns about the joint (1, the round top of the
+   * shoulder) rather than being pulled straight between chest and arm (0, the skin of the armpit)
+   */
+  round: Float32Array;
+  /** which way each palm faces, in the hand's own rest frame (x, z; the fingers run along -y) */
+  palm: [number, number][];
 }
 
 /** Which vertices each vertex shares an edge with (built once, on first use). */
@@ -155,8 +162,29 @@ function neighbours(d: Data): { start: Uint32Array; list: Uint16Array } {
 /** How far the bust is filled out between MakeHuman's average (0) and largest (1) cup. */
 const BUST = 0.35;
 
+/** How round the skin of the armpit stays under a lifted arm (0 = pulled flat, 1 = as round as the shoulder's top). */
+const ARMPIT = 0.2;
+
 /** How much of the arm's turn the cap of the shoulder takes (1 = all of it; less leaves a corner under a raised arm). */
 const CAP = 1;
+
+/**
+ * A hand lying on the floor: fingers along `fingers` (level), palm down.
+ * `palm` is the palm's direction in the hand's rest frame.
+ */
+function palmDown(palm: [number, number], fingers: Vec): Mat {
+  const y: Vec = [-fingers[0], -fingers[1], -fingers[2]]; // the hand's own y runs from the fingers to the wrist
+  const down: Vec = [0, -1, 0];
+  const across = cross(y, down); // where the hand's (y × palm) axis goes
+  // rest axes in the (palm, across) pair: x = palm·px − across·pz, z = palm·pz + across·px
+  const [px, pz] = palm;
+  const x: Vec = [down[0] * px - across[0] * pz, down[1] * px - across[1] * pz, down[2] * px - across[2] * pz];
+  const z: Vec = [down[0] * pz + across[0] * px, down[1] * pz + across[1] * px, down[2] * pz + across[2] * px];
+  return fromCols(x, y, z);
+}
+
+/** How far a pointed foot stretches past the line of the shin (radians). */
+const POINT = 0.3;
 
 /** How far the sole lies below the ankle in the solver's skeleton. */
 const ANKLE_H = 0.086;
@@ -292,6 +320,37 @@ function fitBody(d: Data, shape: BodyShape): Fit {
     foot.o = [foot.o[0], soles[s], foot.o[2]];
   }
 
+  // which way the palms face: a hand is thinnest through the palm, and the fingertips curl toward it
+  const palm = ([B.handL, B.handR] as number[]).map((b): [number, number] => {
+    const { o, r } = rest[b];
+    const pts: [number, number, number][] = [];
+    for (let v = 0; v < d.nv; v++) {
+      if (weightOf(v, b) < 0.9) continue;
+      const p = sub([pos[v * 3], pos[v * 3 + 1], pos[v * 3 + 2]], o);
+      pts.push([dot(p, [r[0], r[3], r[6]]), dot(p, [r[1], r[4], r[7]]), dot(p, [r[2], r[5], r[8]])]);
+    }
+    if (!pts.length) return [0, 1];
+    const mx = pts.reduce((a, p) => a + p[0], 0) / pts.length, mz = pts.reduce((a, p) => a + p[2], 0) / pts.length;
+    let xx = 0, xz = 0, zz = 0;
+    for (const p of pts) { xx += (p[0] - mx) ** 2; xz += (p[0] - mx) * (p[2] - mz); zz += (p[2] - mz) ** 2; }
+    const turn = Math.atan2(2 * xz, xx - zz) / 2 + Math.PI / 2; // the direction the hand is thinnest in
+    let n: [number, number] = [Math.cos(turn), Math.sin(turn)];
+    const tips = [...pts].sort((a, b) => a[1] - b[1]).slice(0, Math.max(1, Math.floor(pts.length * 0.15)));
+    const curl = tips.reduce((a, p) => a + (p[0] - mx) * n[0] + (p[2] - mz) * n[1], 0);
+    if (curl < 0) n = [-n[0], -n[1]];
+    return n;
+  });
+
+  // the top and outside of a shoulder keeps its roundness when the arm lifts; the armpit under it stretches flat
+  const round = new Float32Array(d.nv);
+  for (let v = 0; v < d.nv; v++) {
+    const left = pos[v * 3] > 0;
+    const c = rest[left ? B.armUL : B.armUR].o;
+    const above = (pos[v * 3] - c[0]) * (left ? 0.5 : -0.5) + (pos[v * 3 + 1] - c[1]) * 0.87;
+    const t = clamp((above + 0.03) / 0.06, 0, 1);
+    round[v] = ARMPIT + (1 - ARMPIT) * t * t * (3 - 2 * t);
+  }
+
   /* 4. clothes: shorts and a T-shirt, marked on the skin in the rest pose */
   const cloth = new Float32Array(d.nv * 3).fill(-1);
   // the skull, to put short hair on: everything on the head above the jaw
@@ -384,7 +443,7 @@ function fitBody(d: Data, shape: BodyShape): Fit {
 
   return {
     shape: { ...shape, shoulderHalf: shoulderHalf * torso[2][0], hipHalf: hipHalf * torso[0][0] },
-    pos, nrm, cloth, rest, torsoH, headJoint: joint('head'), torso, girth, female, bun,
+    pos, nrm, cloth, rest, torsoH, headJoint: joint('head'), torso, girth, female, bun, palm, round,
   };
 }
 
@@ -424,7 +483,8 @@ void main(){
   else if (vCloth.x > 0.0) { base = uBottom; gloss = 0.05; }
   else if (vCloth.y > 0.0) { base = uTop; gloss = 0.05; }
   else if (vCloth.z > 0.0) { base = uHair; gloss = 0.08; }
-  base = mix(base, uHot, vTint * 0.6);
+  // working muscles: a clear band of colour, not a wash that muddies the clothes
+  base = mix(base, uHot, smoothstep(0.3, 0.7, vTint) * 0.82);
   vec3 n = normalize(vN);
   vec3 key = normalize(vec3(-0.4, 0.75, 0.55));
   float d = dot(n, key);
@@ -522,7 +582,7 @@ class Human {
   }
 
   /** Where every body part is right now: 3×3 + offset for positions, 3×3 for normals. */
-  private place(f: Fit, sk: Skeleton): void {
+  private place(f: Fit, sk: Skeleton, flat: Vec | null): void {
     const { bones } = this;
     const fr = sk.frames, g = sk.seg;
     const set = (b: number, rn: Mat, s: Vec, on: Vec) => {
@@ -574,18 +634,45 @@ class Human {
     const hand = f.girth.hand;
     limb(B.armUL, fr.lua, g.lua, f.girth.arm);
     limb(B.armLL, fr.lfa, g.lfa, f.girth.forearm);
-    set(B.handL, fr.lfa, [hand, hand, hand], g.lfa[1]);
+    set(B.handL, flat ? palmDown(f.palm[0], flat) : fr.lfa, [hand, hand, hand], g.lfa[1]);
     limb(B.armUR, fr.rua, g.rua, f.girth.arm);
     limb(B.armLR, fr.rfa, g.rfa, f.girth.forearm);
-    set(B.handR, fr.rfa, [hand, hand, hand], g.rfa[1]);
+    set(B.handR, flat ? palmDown(f.palm[1], flat) : fr.rfa, [hand, hand, hand], g.rfa[1]);
     limb(B.thighL, fr.lth, g.lth, f.girth.thigh);
     limb(B.shinL, fr.lsh, g.lsh, f.girth.shin);
     limb(B.thighR, fr.rth, g.rth, f.girth.thigh);
     limb(B.shinR, fr.rsh, g.rsh, f.girth.shin);
+    // a limb this person does not have closes to a point at the joint it would start from;
+    // the skin shared with the part above rounds the end off
+    const gone = (b: number, at: Vec) => {
+      const m = b * 21;
+      bones.fill(0, m, m + 21);
+      bones.set(at, m + 9);
+      this.turn.set([0, 0, 0, 1], b * 4);
+      this.stretch.fill(0, b * 9, b * 9 + 9);
+    };
+    const absent = f.shape.build?.absent ?? {};
+    for (const [limb, upper, lower, end, seg] of [
+      ['armL', B.armUL, B.armLL, B.handL, g.lua], ['armR', B.armUR, B.armLR, B.handR, g.rua],
+      ['legL', B.thighL, B.shinL, B.footL, g.lth], ['legR', B.thighR, B.shinR, B.footR, g.rth],
+    ] as ['armL' | 'armR' | 'legL' | 'legR', number, number, number, [Vec, Vec]][]) {
+      const gap = absent[limb];
+      if (!gap) continue;
+      const at = gap === 'whole' ? seg[0] : seg[1];
+      if (gap === 'whole') gone(upper, at);
+      gone(lower, at);
+      gone(end, at);
+    }
     for (const [b, shin, ft, sm] of [[B.footL, g.lsh, g.lft, fr.lsh], [B.footR, g.rsh, g.rft, fr.rsh]] as [number, [Vec, Vec], [Vec, Vec], Mat][]) {
-      const z = norm(sub(ft[1], ft[0]));
-      const y = orth(sub(shin[0], shin[1]), z, [sm[2], sm[5], sm[8]]);
+      if (absent[b === B.footL ? 'legL' : 'legR']) continue;
+      let z = norm(sub(ft[1], ft[0]));
+      let y = orth(sub(shin[0], shin[1]), z, [sm[2], sm[5], sm[8]]);
       const ankle = shin[1];
+      if (len(sub(ft[0], ankle)) < 1e-4) {
+        // a pointed foot stretches a little past the line of the shin, so its top can lie on the floor
+        const c = Math.cos(POINT), s = Math.sin(POINT);
+        [z, y] = [[z[0] * c + y[0] * s, z[1] * c + y[1] * s, z[2] * c + y[2] * s], [y[0] * c - z[0] * s, y[1] * c - z[1] * s, y[2] * c - z[2] * s]];
+      }
       set(b, fromCols(cross(y, z), y, z), [hand, hand, hand], [ankle[0] - y[0] * ANKLE_H, ankle[1] - y[1] * ANKLE_H, ankle[2] - y[2] * ANKLE_H]);
     }
   }
@@ -623,6 +710,7 @@ class Human {
         const mine = group[side], c = centre[side];
         const dx = x - c[0], dy = y - c[1], dz = z - c[2];
         let rx = 0, ry = 0, rz = 0, rw = 0, cx = 0, cy = 0, cz = 0, sx = 0, sy = 0, sz = 0, share = 0;
+        let lx = 0, ly = 0, lz = 0, mx = 0, my = 0, mz = 0; // the same parts blended the plain way
         for (let k = 0; k < 4; k++) {
           const w = skinW[v * 4 + k];
           if (!w) break;
@@ -638,8 +726,14 @@ class Human {
             qz += a0 * (M[m + 18] * nx + M[m + 19] * ny + M[m + 20] * nz);
             continue;
           }
-          const t = b * 4, e = b * 9, p = b * 6 + side * 3;
+          const t = b * 4, e = b * 9, p = b * 6 + side * 3, m = b * 21;
           const a = a0;
+          lx += a * (M[m] * x + M[m + 1] * y + M[m + 2] * z + M[m + 9]);
+          ly += a * (M[m + 3] * x + M[m + 4] * y + M[m + 5] * z + M[m + 10]);
+          lz += a * (M[m + 6] * x + M[m + 7] * y + M[m + 8] * z + M[m + 11]);
+          mx += a * (M[m + 12] * nx + M[m + 13] * ny + M[m + 14] * nz);
+          my += a * (M[m + 15] * nx + M[m + 16] * ny + M[m + 17] * nz);
+          mz += a * (M[m + 18] * nx + M[m + 19] * ny + M[m + 20] * nz);
           rx += a * turn[t]; ry += a * turn[t + 1]; rz += a * turn[t + 2]; rw += a * turn[t + 3];
           sx += a * (stretch[e] * dx + stretch[e + 1] * dy + stretch[e + 2] * dz);
           sy += a * (stretch[e + 3] * dx + stretch[e + 4] * dy + stretch[e + 5] * dz);
@@ -652,12 +746,13 @@ class Human {
         const r0 = 1 - 2 * (ry * ry + rz * rz), r1 = 2 * (rx * ry - rz * rw), r2 = 2 * (rx * rz + ry * rw);
         const r3 = 2 * (rx * ry + rz * rw), r4 = 1 - 2 * (rx * rx + rz * rz), r5 = 2 * (ry * rz - rx * rw);
         const r6 = 2 * (rx * rz - ry * rw), r7 = 2 * (ry * rz + rx * rw), r8 = 1 - 2 * (rx * rx + ry * ry);
-        out[o] = px + cx + r0 * sx + r1 * sy + r2 * sz;
-        out[o + 1] = py + cy + r3 * sx + r4 * sy + r5 * sz;
-        out[o + 2] = pz + cz + r6 * sx + r7 * sy + r8 * sz;
-        out[o + 3] = qx + share * (r0 * nx + r1 * ny + r2 * nz);
-        out[o + 4] = qy + share * (r3 * nx + r4 * ny + r5 * nz);
-        out[o + 5] = qz + share * (r6 * nx + r7 * ny + r8 * nz);
+        const g = f.round[v], h = 1 - g;
+        out[o] = px + h * lx + g * (cx + r0 * sx + r1 * sy + r2 * sz);
+        out[o + 1] = py + h * ly + g * (cy + r3 * sx + r4 * sy + r5 * sz);
+        out[o + 2] = pz + h * lz + g * (cz + r6 * sx + r7 * sy + r8 * sz);
+        out[o + 3] = qx + h * mx + g * share * (r0 * nx + r1 * ny + r2 * nz);
+        out[o + 4] = qy + h * my + g * share * (r3 * nx + r4 * ny + r5 * nz);
+        out[o + 5] = qz + h * mz + g * share * (r6 * nx + r7 * ny + r8 * nz);
         out[o + 6] = tint;
         continue;
       }
@@ -730,13 +825,15 @@ class Human {
   render(
     w: number, h: number, f: Fit, sk: Skeleton, cam: Camera,
     col: HumanColors, lit: (s: SegName) => boolean, props: Cylinder[],
+    /** hands flat on the floor, fingers pointing this (level) way; null = hands follow the forearms */
+    flatHands: Vec | null = null,
   ): HTMLCanvasElement {
     const { gl, loc, at } = this;
     if (this.canvas.width !== w || this.canvas.height !== h) {
       this.canvas.width = w;
       this.canvas.height = h;
     }
-    this.place(f, sk);
+    this.place(f, sk, flatHands);
     this.shoulders(f);
     const hot = new Float32Array(NB);
     SEGS.forEach((segs, b) => { hot[b] = segs.some(lit) ? 1 : 0; });

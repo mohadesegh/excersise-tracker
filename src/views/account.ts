@@ -524,7 +524,7 @@ export const progressView: View = (root) => {
     <section class="progress">
       <h1 class="h1">${text.progress}</h1>
       <div class="stats">
-        <div><b>${fa(ss.length)}</b><span>${text.sessions}</span></div>
+        <div><b>${fa(ss.filter((x) => x.day >= 0).length)}</b><span>${text.sessions}</span></div>
         <div><b>${fa(minutes)}</b><span>${text.minutes}</span></div>
         <div><b>${fa(kcal.toLocaleString("en-US").replace(/,/g, "٬"))}</b><span>${text.kcal}</span></div>
         <div><b>${fa(weekStreak())}</b><span>${text.streak}</span></div>
@@ -564,9 +564,9 @@ export const progressView: View = (root) => {
 							.map(
 								(
 									s,
-								) => `<li><span>${state.plan?.days[s.day] ? dayTitle(state.plan.days[s.day], locale) : locale === "fa" ? "جلسه" : locale === "tr" ? "Seans" : "Session"}</span>
+								) => `<li><span>${s.day < 0 && s.logs?.[0] && EX[s.logs[0].id] ? exerciseName(s.logs[0].id, locale) : state.plan?.days[s.day] ? dayTitle(state.plan.days[s.day], locale) : locale === "fa" ? "جلسه" : locale === "tr" ? "Seans" : "Session"}</span>
                   <span class="muted">${new Date(s.ts).toLocaleDateString(localeTag(locale), { weekday: "long", day: "numeric", month: "long" })}</span>
-                  <span>${fa(s.minutes)} ${locale === "fa" ? "دقیقه" : locale === "tr" ? "dk" : "min"}</span><span>${FEEL[locale][s.feel]}</span></li>`,
+                  <span>${fa(s.minutes)} ${locale === "fa" ? "دقیقه" : locale === "tr" ? "dk" : "min"}</span><span>${s.day < 0 && s.logs?.[0] ? dose(s.logs[0].reps, !!EX[s.logs[0].id]?.timed, s.sets, locale) : FEEL[locale][s.feel]}</span></li>`,
 							)
 							.join("")}</ul>`
 					: `<div class="empty">${text.notYet} <a href="#/today">${text.firstWorkout}</a></div>`

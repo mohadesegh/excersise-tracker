@@ -861,6 +861,10 @@ canvas {
 	font-size: 0.9rem;
 	white-space: nowrap;
 }
+.ex-row.done .ex-row-dose {
+	color: var(--ok);
+	font-weight: 700;
+}
 .day-chips {
 	list-style: none;
 	padding: 0;
@@ -1384,6 +1388,18 @@ canvas {
 .alt canvas {
 	height: 84px;
 }
+.alts li {
+	flex: none;
+}
+/* with a mouse there is no swipe: these rows need a scrollbar to be reachable */
+@media (hover: hover) and (pointer: fine) {
+	.chips,
+	.alts,
+	.form-switch {
+		scrollbar-width: thin;
+		padding-bottom: 6px;
+	}
+}
 
 /* progress */
 .stats {
@@ -1789,6 +1805,15 @@ canvas {
 	grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
 	gap: 8px;
 	margin: 10px 0 2px;
+}
+.log-box {
+	margin: 4px 0 14px;
+}
+.log-box .btn {
+	width: 100%;
+}
+.log-form .btn {
+	margin-top: 8px;
 }
 .stepper {
 	direction: ltr;

@@ -24,6 +24,8 @@ export interface Pose {
   lkv?: number; rkv?: number;
 }
 
+import type { Absent } from '../types';
+
 export type Prop = 'dumbbell' | 'barbell';
 
 /** Body parts that can rest on the floor. */
@@ -157,6 +159,8 @@ export interface Build {
   limbs: { arm: number; forearm: number; thigh: number; shin: number };
   /** half the measured distance between the shoulder joints (metres), when a scan gave one */
   shoulderHalf?: number;
+  /** limbs this person does not have */
+  absent?: Absent;
 }
 
 export const DEFAULT_SHAPE: BodyShape = {
@@ -340,39 +344,57 @@ export interface SolveOpts {
 const smooth = (a: number, b: number, v: number) => { const t = Math.min(1, Math.max(0, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
 
 /**
+ * Bring one limb onto the floor by turning one joint. `height` is how far the
+ * limb is above the floor for a pose; the joint is searched between `lo` and
+ * `hi` degrees from where it was posed. The pull fades out as the posed limb
+ * gets higher, so a limb that lifts off the floor does so without a jump.
+ */
+function reach(q: Required<Pose>, key: keyof Pose, lo: number, hi: number, share: number, height: (q: Required<Pose>) => number): void {
+  const from = q[key];
+  const at = (v: number) => { q[key] = v; return height(q); };
+  const pull = share * (1 - smooth(0.12, 0.3, at(from)));
+  if (pull <= 0) { q[key] = from; return; }
+  let a = from + lo, b = from + hi, ha = at(a), hb = at(b);
+  let best = Math.abs(ha) < Math.abs(hb) ? a : b;
+  if (Math.sign(ha) !== Math.sign(hb)) {
+    for (let i = 0; i < 14; i++) {
+      const m = (a + b) / 2, hm = at(m);
+      if (Math.sign(hm) === Math.sign(ha)) { a = m; ha = hm; } else { b = m; hb = hm; }
+    }
+    best = (a + b) / 2;
+  }
+  q[key] = from + (best - from) * pull;
+}
+
+/**
  * Lying down: rest the limbs on the floor the torso lies on. A foot or hand
  * that is posed near the floor is brought onto it by one joint (the knee of a
- * bent leg, the hip of a straight one, the shoulder of an arm). The pull fades
- * out with height, so a limb that lifts off the floor does so without a jump.
+ * bent leg, the hip of a straight one, the shoulder of an arm).
  */
 function settle(p: Required<Pose>, shape: BodyShape, feet: 'flat' | 'toes' | 'point'): Required<Pose> {
   const q = { ...p };
   const r0 = fk(q, shape, 0, feet);
   const floor = Math.min(lowest(r0, 'hips', shape), lowest(r0, 'back', shape), r0.head[1] - shape.head);
-  const rest = (key: keyof Pose, lo: number, hi: number, share: number, height: (r: Raw) => number) => {
-    const from = q[key];
-    const at = (v: number) => { q[key] = v; return height(fk(q, shape, 0, feet)) - floor; };
-    const pull = share * (1 - smooth(0.12, 0.3, at(from)));
-    if (pull <= 0) { q[key] = from; return; }
-    let a = from + lo, b = from + hi, ha = at(a), hb = at(b);
-    let best = Math.abs(ha) < Math.abs(hb) ? a : b;
-    if (Math.sign(ha) !== Math.sign(hb)) {
-      for (let i = 0; i < 14; i++) {
-        const m = (a + b) / 2, hm = at(m);
-        if (Math.sign(hm) === Math.sign(ha)) { a = m; ha = hm; } else { b = m; hb = hm; }
-      }
-      best = (a + b) / 2;
-    }
-    q[key] = from + (best - from) * pull;
-  };
   const sole = (l: Raw['ll']) => Math.min(l.toe[1] - 0.028, l.heel[1] - 0.036);
   for (const s of ['l', 'r'] as const) {
-    const leg = (r: Raw) => sole(s === 'l' ? r.ll : r.rl);
+    const leg = (x: Required<Pose>) => { const r = fk(x, shape, 0, feet); return sole(s === 'l' ? r.ll : r.rl) - floor; };
     const bent = smooth(15, 35, q[`${s}k`]);
-    rest(`${s}hf`, -25, 8, 1 - bent, leg);
-    rest(`${s}k`, -40, 40, bent, leg);
-    rest(`${s}sf`, -30, 10, 1, (r) => (s === 'l' ? r.la : r.ra).hand[1] - 0.03);
+    reach(q, `${s}hf`, -25, 8, 1 - bent, leg);
+    reach(q, `${s}k`, -40, 40, bent, leg);
+    reach(q, `${s}sf`, -30, 10, 1, (x) => { const r = fk(x, shape, 0, feet); return (s === 'l' ? r.la : r.ra).hand[1] - 0.03 - floor; });
   }
+  return q;
+}
+
+/**
+ * Kneeling: a shin that is posed near the floor lies down on it, from the knee
+ * to the toes (the knee bends or opens until the toes touch).
+ */
+function kneel(p: Required<Pose>, shape: BodyShape, tilt: number, feet: 'flat' | 'toes' | 'point'): Required<Pose> {
+  const q = { ...p };
+  const floor = lowest(fk(q, shape, tilt, feet), 'knees', shape);
+  for (const s of ['l', 'r'] as const)
+    reach(q, `${s}k`, -40, 40, 1, (x) => { const r = fk(x, shape, tilt, feet); return (s === 'l' ? r.ll : r.rl).toe[1] - 0.028 - floor; });
   return q;
 }
 
@@ -398,6 +420,7 @@ export function solve(p: Required<Pose>, shape: BodyShape = DEFAULT_SHAPE, opts:
       tilt = (lo + hi) / 2;
     }
   }
+  if (opts.contacts?.includes('knees')) p = kneel(p, shape, tilt, feet);
   const r = fk(p, shape, tilt, feet);
 
   // rest on the floor: the lowest surface of any part touches y = 0

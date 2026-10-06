@@ -487,8 +487,10 @@ export class Mannequin {
   private props(sk: ReturnType<typeof solve>, side: Vec): Cylinder[] {
     const addv = (a: Vec, b: Vec, k = 1): V3 => [a[0] + b[0] * k, a[1] + b[1] * k, a[2] + b[2] * k];
     const props: Cylinder[] = [];
+    const absent = this.shape.build?.absent ?? {};
     if (this.anim?.prop === 'dumbbell') {
-      for (const h of sk.hands) {
+      for (const [i, h] of sk.hands.entries()) {
+        if (absent[i ? 'armR' : 'armL']) continue; // no hand to hold it
         props.push({ a: addv(h, side, -0.075), b: addv(h, side, 0.075), r: 0.016 });
         props.push({ a: addv(h, side, -0.115), b: addv(h, side, -0.065), r: 0.05 });
         props.push({ a: addv(h, side, 0.065), b: addv(h, side, 0.115), r: 0.05 });
@@ -503,6 +505,15 @@ export class Mannequin {
       props.push({ a: addv(l, dir, 0.42), b: addv(l, dir, 0.5), r: 0.2 });
     }
     return props;
+  }
+
+  /** Hands that carry the body lie flat on the floor: which way their fingers point (toward the head), else null. */
+  private flatHands(torso: number[]): Vec | null {
+    const a = this.anim;
+    const mode = a?.hands ?? (a?.prop ? 'grip' : a?.contacts?.some((c) => c === 'hands' || c === 'elbows') ? 'floor' : 'free');
+    if (mode !== 'floor') return null;
+    const level = (v: Vec): Vec | null => { const l = Math.hypot(v[0], v[2]); return l > 0.3 ? [v[0] / l, 0, v[2] / l] : null; };
+    return level([torso[1], torso[4], torso[7]]) ?? level([torso[2], torso[5], torso[8]]) ?? [0, 0, 1];
   }
 
   private humanPal: HumanColors | null = null;
@@ -634,7 +645,7 @@ export class Mannequin {
       const palm = (wrist: Vec, m: number[]): Vec => [wrist[0] - m[1] * 0.07, wrist[1] - m[4] * 0.07, wrist[2] - m[7] * 0.07];
       const held = { ...sk, hands: [palm(sk.hands[0], sk.frames.lfa), palm(sk.hands[1], sk.frames.rfa)] as [Vec, Vec] };
       const img = human.render(w, h, fit, sk, { rot, cam: CAM, ox: ox * q, oy: oy * q, scale: scale * q },
-        this.humanColors(), (n) => this.showMuscles && this.hl.has(n), this.props(held, [t[0], t[3], t[6]]));
+        this.humanColors(), (n) => this.showMuscles && this.hl.has(n), this.props(held, [t[0], t[3], t[6]]), this.flatHands(t));
       this.floor(proj, R, scale);
       ctx.drawImage(img, 0, 0, w, h, 0, 0, W, H);
       this.drawSpots(sk, proj, scale);

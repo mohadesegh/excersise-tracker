@@ -1,5 +1,5 @@
 /**
- * Body scan maths: two still frames (front and side) → the user's measurements.
+ * Body scan maths: still frames of the body (front and back, and either side) → the user's measurements.
  *
  * Joint positions come from the pose landmarks; torso widths and depths come
  * from the body silhouette. Pixels become centimetres through the height the
@@ -7,7 +7,7 @@
  */
 import { estimateCirc, perimeter } from "../body";
 import { P, type Lm } from "../formcheck/analyzers";
-import type { BodyScan, Sex } from "../types";
+import type { Absent, BodyScan, Sex } from "../types";
 import { clamp, dayKey } from "../utils";
 
 export interface Silhouette {
@@ -22,23 +22,31 @@ export interface Frame {
 	w: number;
 	h: number;
 	mask?: Silhouette;
+	/** which way the body was turned to the camera; front when absent */
+	view?: View;
 }
+
+/** How the body is turned to the camera in a frame. */
+export type View = "front" | "back" | "side";
 
 export type Facing = "front" | "side" | "none";
 
 const HEEL_L = 29;
 const HEEL_R = 30;
-const NEEDED = [
-	P.nose,
-	P.lShoulder,
-	P.rShoulder,
-	P.lHip,
-	P.rHip,
-	P.lKnee,
-	P.rKnee,
-	P.lAnkle,
-	P.rAnkle,
-];
+/**
+ * The points that must be in the picture. From behind the face is hidden, and
+ * a limb the user does not have is not asked for (the pose model still guesses
+ * a place for it, which means nothing).
+ */
+function needed(view: View, absent: Absent): number[] {
+	const out: number[] = [P.lShoulder, P.rShoulder, P.lHip, P.rHip];
+	if (view !== "back") out.push(P.nose);
+	if (absent.legL !== "whole") out.push(P.lKnee);
+	if (absent.legR !== "whole") out.push(P.rKnee);
+	if (!absent.legL) out.push(P.lAnkle);
+	if (!absent.legR) out.push(P.rAnkle);
+	return out;
+}
 
 type Pt = [number, number];
 const px = (f: Frame, i: number): Pt => [f.lms[i].x * f.w, f.lms[i].y * f.h];
@@ -53,23 +61,37 @@ const lerp = (a: Pt, b: Pt, t: number): Pt => [
  * Head to feet inside the frame, with a little margin, and seen clearly.
  * Side-on, the far shoulder, hip, knee and ankle are hidden: one of each pair is enough.
  */
-export function wholeBody(lms: Lm[], profile = false): boolean {
+export function wholeBody(
+	lms: Lm[],
+	view: View = "front",
+	absent: Absent = {},
+): boolean {
 	const inFrame = (i: number) => {
 		const p = lms[i];
 		return !!p && p.x > 0.02 && p.x < 0.98 && p.y > 0.03 && p.y < 0.98;
 	};
 	const seen = (i: number) => (lms[i]?.visibility ?? 1) > 0.5;
-	if (!NEEDED.every(inFrame) || !seen(P.nose)) return false;
+	const want = needed(view, absent);
+	if (!want.every(inFrame)) return false;
+	if (view !== "back" && !seen(P.nose)) return false;
 	const pairs = [
 		[P.lShoulder, P.rShoulder],
 		[P.lHip, P.rHip],
 		[P.lKnee, P.rKnee],
 		[P.lAnkle, P.rAnkle],
-	];
-	return pairs.every(([l, r]) =>
-		profile ? seen(l) || seen(r) : seen(l) && seen(r),
+	].map((pair) => pair.filter((i) => want.includes(i)));
+	return pairs.every((pair) =>
+		view === "side" ? !pair.length || pair.some(seen) : pair.every(seen),
 	);
 }
+
+/** Facing the camera (true) or turned away from it: seen from the front, the body's left is on the picture's right. */
+export const towardCamera = (lms: Lm[]): boolean =>
+	lms[P.lShoulder].x > lms[P.rShoulder].x;
+
+/** Side-on: which way the body looks, +1 toward the picture's right, -1 toward its left. */
+export const sideFacing = (lms: Lm[]): number =>
+	Math.sign(lms[P.nose].x - (lms[P.lShoulder].x + lms[P.rShoulder].x) / 2) || 1;
 
 /** Which way the body is turned, from how wide the shoulders look next to the torso length. */
 export function facing(lms: Lm[], aspect: number): Facing {
@@ -83,7 +105,13 @@ export function facing(lms: Lm[], aspect: number): Facing {
 }
 
 /** Arms held a little away from the body, so the waist is not hidden behind them. */
-export function armsClear(lms: Lm[], aspect: number): boolean {
+export function armsClear(
+	lms: Lm[],
+	aspect: number,
+	absent: Absent = {},
+): boolean {
+	// without both wrists there is nothing to compare; the scan goes on
+	if (absent.armL || absent.armR) return true;
 	const f: Frame = { lms, w: aspect, h: 1 };
 	const sh = Math.abs(px(f, P.lShoulder)[0] - px(f, P.rShoulder)[0]);
 	const wr = Math.abs(px(f, P.lWrist)[0] - px(f, P.rWrist)[0]);
@@ -91,9 +119,14 @@ export function armsClear(lms: Lm[], aspect: number): boolean {
 }
 
 /** How far the body moved between two frames, as a fraction of the frame. */
-export function drift(a: Lm[], b: Lm[]): number {
+export function drift(
+	a: Lm[],
+	b: Lm[],
+	view: View = "front",
+	absent: Absent = {},
+): number {
 	let d = 0;
-	for (const i of NEEDED)
+	for (const i of needed(view, absent))
 		d = Math.max(d, Math.hypot(a[i].x - b[i].x, a[i].y - b[i].y));
 	return d;
 }
@@ -135,13 +168,21 @@ const median = (v: number[]): number | null => {
 };
 
 /** Top of the head to the soles, in frame pixels. */
-function heightPx(f: Frame): number {
-	const feet = Math.max(
-		...[P.lAnkle, P.rAnkle, HEEL_L, HEEL_R]
-			.filter((i) => f.lms[i])
-			.map((i) => px(f, i)[1]),
-	);
+function heightPx(f: Frame, absent: Absent = {}): number {
+	const soles = [
+		...(absent.legL ? [] : [P.lAnkle, HEEL_L]),
+		...(absent.legR ? [] : [P.rAnkle, HEEL_R]),
+	].filter((i) => f.lms[i]);
 	const nose = px(f, P.nose)[1];
+	if (!soles.length) {
+		// no foot to measure down to: a torso is about 29% of the body's height
+		const torso = dist(
+			mid(px(f, P.lShoulder), px(f, P.rShoulder)),
+			mid(px(f, P.lHip), px(f, P.rHip)),
+		);
+		return torso / 0.29;
+	}
+	const feet = Math.max(...soles.map((i) => px(f, i)[1]));
 	// landmarks alone: the nose sits at about 93% of standing height, the heel about 2% above the floor
 	const guess = (feet - nose) / 0.91;
 	const m = f.mask;
@@ -167,6 +208,7 @@ function sections(
 	f: Frame,
 	cm: number,
 	fence: boolean,
+	absent: Absent = {},
 ): { hip: number | null; waist: number | null; chest: number | null } {
 	const none = { hip: null, waist: null, chest: null };
 	const m = f.mask;
@@ -196,8 +238,8 @@ function sections(
 				hi = f.w - 1;
 			if (fence) {
 				const xs = [
-					armX(P.lShoulder, P.lElbow, P.lWrist, c[1]),
-					armX(P.rShoulder, P.rElbow, P.rWrist, c[1]),
+					absent.armL ? null : armX(P.lShoulder, P.lElbow, P.lWrist, c[1]),
+					absent.armR ? null : armX(P.rShoulder, P.rElbow, P.rWrist, c[1]),
 				].filter((v): v is number => v !== null);
 				for (const x of xs) {
 					if (x < c[0]) lo = Math.max(lo, x);
@@ -266,25 +308,46 @@ export interface ScanInput {
 	height: number;
 	/** kilograms */
 	weight: number;
+	/** limbs the user does not have: the scan does not look for them and measures the other side */
+	absent?: Absent;
 }
 
 /**
- * Front frame (required) + side frame (optional) → measurements.
- * Returns null when the front frame is unusable.
+ * A frame from the front or the back (required) + a side frame (optional) → measurements.
+ * Returns null when the first frame is unusable.
  */
 export function measure(
 	front: Frame,
 	side: Frame | null,
 	who: ScanInput,
 ): BodyScan | null {
-	if (!wholeBody(front.lms)) return null;
-	const hpx = heightPx(front);
+	const gone = who.absent ?? {};
+	if (!wholeBody(front.lms, front.view === "back" ? "back" : "front", gone))
+		return null;
+	const hpx = heightPx(front, gone);
+	/** which of the two sides (left, right) has each part of a limb */
+	const has = {
+		upperArm: [gone.armL !== "whole", gone.armR !== "whole"],
+		forearm: [!gone.armL, !gone.armR],
+		thigh: [gone.legL !== "whole", gone.legR !== "whole"],
+		shin: [!gone.legL, !gone.legR],
+	};
 	// standing well back from the phone is fine: the body only has to be big enough to measure
 	if (!(hpx > front.h * 0.15)) return null;
 	const cm = who.height / hpx;
 	const seg = (a: number, b: number) => dist(px(front, a), px(front, b)) * cm;
-	const both = (l: [number, number], r: [number, number]) =>
-		(seg(...l) + seg(...r)) / 2;
+	/** a limb's length from whichever sides have it; a usual share of the height when neither does */
+	const both = (
+		l: [number, number],
+		r: [number, number],
+		ok: boolean[],
+		usual: number,
+	) => {
+		const v = [l, r].filter((_, i) => ok[i]).map((p) => seg(...p));
+		return v.length
+			? v.reduce((a, b) => a + b, 0) / v.length
+			: who.height * usual;
+	};
 	const round = (v: number) => Math.round(v * 10) / 10;
 
 	// what an average body of this height and weight measures: the scan may move away from it, within reason
@@ -303,10 +366,10 @@ export function measure(
 			? round(clamp(v, around * 0.72, around * 1.45))
 			: undefined;
 
-	const fw = sections(front, cm, true);
-	const sideOk = side && wholeBody(side.lms, true);
+	const fw = sections(front, cm, true, gone);
+	const sideOk = side && wholeBody(side.lms, "side", gone);
 	const sd = sideOk
-		? sections(side, who.height / heightPx(side), false)
+		? sections(side, who.height / heightPx(side, gone), false)
 		: { hip: null, waist: null, chest: null };
 
 	/** both sides of a limb, averaged; kept only inside what a body of this height can measure */
@@ -317,8 +380,10 @@ export function measure(
 		reach: number,
 		min: number,
 		max: number,
+		ok: boolean[],
 	): number | undefined => {
 		const v = [l, r]
+			.filter((_, i) => ok[i])
 			.map(([a, b]) => limbWidth(front, a, b, ts, reach))
 			.filter((x): x is number => x !== null);
 		if (!v.length) return undefined;
@@ -335,6 +400,7 @@ export function measure(
 			0.4,
 			0.035,
 			0.09,
+			has.upperArm,
 		),
 		forearmW: limb(
 			[P.lElbow, P.lWrist],
@@ -343,6 +409,7 @@ export function measure(
 			0.3,
 			0.03,
 			0.07,
+			has.forearm,
 		),
 		thighW: limb(
 			[P.lHip, P.lKnee],
@@ -351,6 +418,7 @@ export function measure(
 			0.4,
 			0.06,
 			0.15,
+			has.thigh,
 		),
 		calfW: limb(
 			[P.lKnee, P.lAnkle],
@@ -359,6 +427,7 @@ export function measure(
 			0.25,
 			0.045,
 			0.1,
+			has.shin,
 		),
 		date: dayKey(),
 		kg: who.weight,
@@ -376,11 +445,13 @@ export function measure(
 			) * cm,
 		),
 		upperArm: round(
-			both([P.lShoulder, P.lElbow], [P.rShoulder, P.rElbow]),
+			both([P.lShoulder, P.lElbow], [P.rShoulder, P.rElbow], has.upperArm, 0.17),
 		),
-		forearm: round(both([P.lElbow, P.lWrist], [P.rElbow, P.rWrist])),
-		thigh: round(both([P.lHip, P.lKnee], [P.rHip, P.rKnee])),
-		shin: round(both([P.lKnee, P.lAnkle], [P.rKnee, P.rAnkle])),
+		forearm: round(
+			both([P.lElbow, P.lWrist], [P.rElbow, P.rWrist], has.forearm, 0.153),
+		),
+		thigh: round(both([P.lHip, P.lKnee], [P.rHip, P.rKnee], has.thigh, 0.253)),
+		shin: round(both([P.lKnee, P.lAnkle], [P.rKnee, P.rAnkle], has.shin, 0.247)),
 	};
 }
 

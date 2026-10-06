@@ -1,8 +1,10 @@
 /**
  * Camera body scan.
  *
- * The user props the phone up, steps back and stands still twice: facing the
- * camera, then side-on. Each pose is captured hands-free after a short hold.
+ * The user props the phone up, steps back and stands still four times, a
+ * quarter turn apart: facing the camera, side-on, back to it, and the other
+ * side. Each pose is captured hands-free after a short hold; every view after
+ * the first is optional.
  * Everything runs on the device; only the resulting measurements are returned,
  * never an image.
  */
@@ -17,7 +19,10 @@ import {
 	drift,
 	facing,
 	measureAll,
+	sideFacing,
+	towardCamera,
 	wholeBody,
+	type View,
 	type Frame,
 	type ScanInput,
 } from "./measure";
@@ -29,10 +34,13 @@ const STILL = 0.025;
 /** Milliseconds of lost or jumpy tracking a hold survives. */
 const GRACE = 450;
 /** Frames kept from one hold, and the milliseconds between them. */
-const SHOTS = 8;
+const SHOTS = 5;
 const SHOT_EVERY = 250;
 
-type Stage = "front" | "side";
+type Stage = "front" | "side" | "back" | "side2";
+const ORDER: Stage[] = ["front", "side", "back", "side2"];
+const viewOf = (s: Stage): View =>
+	s === "front" ? "front" : s === "back" ? "back" : "side";
 
 const TEXT = {
 	fa: {
@@ -50,11 +58,17 @@ const TEXT = {
 		arms: "دست‌ها را کمی از بدن فاصله بده",
 		turn: "حالا یک‌چهارم بچرخ و از پهلو بایست",
 		hold: "همین‌طور بمان",
-		step: (n: number) => `مرحله‌ی ${fa(n)} از ${fa(2)}`,
+		step: (n: number) => `مرحله‌ی ${fa(n)} از ${fa(4)}`,
 		front: "نمای روبه‌رو",
 		side: "نمای پهلو",
-		hint: "گوشی را حدود دو متر دورتر و هم‌ارتفاع کمر به جایی تکیه بده. لباس چسبان بپوش و در نور خوب بایست.",
-		skipSide: "بدون نمای پهلو ادامه بده",
+		back: "نمای پشت",
+		side2: "پهلوی دیگر",
+		turnBack: "حالا پشت به گوشی بایست",
+		turnOther: "یک‌چهارم دیگر بچرخ تا پهلوی دیگرت رو به گوشی باشد",
+		sayBack: "عالی. حالا پشت به گوشی بایست",
+		sayOther: "عالی. حالا از پهلوی دیگر بایست",
+		hint: "گوشی را حدود دو متر دورتر و هم‌ارتفاع کمر به جایی تکیه بده. لباس چسبان بپوش و در نور خوب بایست. چهار بار می‌ایستی: روبه‌رو، پهلو، پشت و پهلوی دیگر.",
+		skipSide: "با همین نماها تمام کن",
 		failed: "اندازه‌گیری نشد. دوباره در کادر بایست.",
 		privacy:
 			"تصویر دوربین فقط روی همین گوشی پردازش می‌شود؛ هیچ عکسی ذخیره یا ارسال نمی‌شود، فقط اندازه‌ها می‌مانند.",
@@ -78,11 +92,17 @@ const TEXT = {
 		arms: "Hold your arms a little away from your body",
 		turn: "Now make a quarter turn and stand side-on",
 		hold: "Hold still",
-		step: (n: number) => `Step ${n} of 2`,
+		step: (n: number) => `Step ${n} of 4`,
 		front: "Front view",
 		side: "Side view",
-		hint: "Prop the phone about two metres away at waist height. Wear fitted clothes and stand in good light.",
-		skipSide: "Continue without the side view",
+		back: "Back view",
+		side2: "Other side",
+		turnBack: "Now stand with your back to the phone",
+		turnOther: "Make another quarter turn so your other side faces the phone",
+		sayBack: "Great. Now stand with your back to the phone",
+		sayOther: "Great. Now show your other side",
+		hint: "Prop the phone about two metres away at waist height. Wear fitted clothes and stand in good light. You stand four times: front, side, back and the other side.",
+		skipSide: "Finish with these views",
 		failed: "Could not measure. Stand in the frame again.",
 		privacy:
 			"The camera image is processed only on this phone; no picture is saved or sent, only the measurements are kept.",
@@ -105,11 +125,17 @@ const TEXT = {
 		arms: "Kollarını vücudundan biraz uzak tut",
 		turn: "Şimdi çeyrek tur dön ve yan dur",
 		hold: "Kıpırdamadan bekle",
-		step: (n: number) => `Adım ${n} / 2`,
+		step: (n: number) => `Adım ${n} / 4`,
 		front: "Önden görünüm",
 		side: "Yandan görünüm",
-		hint: "Telefonu yaklaşık iki metre uzağa, bel hizasında bir yere yasla. Dar kıyafet giy ve iyi ışıkta dur.",
-		skipSide: "Yan görünüm olmadan devam et",
+		back: "Arkadan görünüm",
+		side2: "Diğer yan",
+		turnBack: "Şimdi sırtını telefona dön",
+		turnOther: "Bir çeyrek tur daha dön; diğer yanın telefona baksın",
+		sayBack: "Harika. Şimdi sırtını telefona dön",
+		sayOther: "Harika. Şimdi diğer yanını göster",
+		hint: "Telefonu yaklaşık iki metre uzağa, bel hizasında bir yere yasla. Dar kıyafet giy ve iyi ışıkta dur. Dört kez duracaksın: ön, yan, arka ve diğer yan.",
+		skipSide: "Bu görünümlerle bitir",
 		failed: "Ölçüm alınamadı. Yeniden kadraja gir.",
 		privacy:
 			"Kamera görüntüsü yalnızca bu telefonda işlenir; hiçbir fotoğraf kaydedilmez ya da gönderilmez, yalnızca ölçüler saklanır.",
@@ -161,10 +187,14 @@ export function openBodyScan({ who, onDone }: BodyScanOptions): () => void {
 	let raf = 0;
 	let closed = false;
 	let stage: Stage = "front";
-	/** frames sampled during the current hold, and the ones kept from the front view */
+	/** frames sampled during the current hold, and the ones kept: front and back together, and the two sides */
 	let shots: Frame[] = [];
 	let lastShot = 0;
 	let fronts: Frame[] = [];
+	let sides: Frame[] = [];
+	/** which way the body looked in the first side view; the second has to look the other way */
+	let firstSide = 0;
+	const gone = who.absent ?? {};
 	/** when the current hold began, and the pose it began with */
 	let heldSince = 0;
 	let anchor: Lm[] | null = null;
@@ -177,10 +207,9 @@ export function openBodyScan({ who, onDone }: BodyScanOptions): () => void {
 		cueEl.className = `fc-cue ${level}`;
 	};
 	const showStage = () => {
-		stepEl.querySelector("b")!.textContent = t.step(stage === "front" ? 1 : 2);
-		stepEl.querySelector("small")!.textContent =
-			stage === "front" ? t.front : t.side;
-		skipBtn.hidden = stage !== "side";
+		stepEl.querySelector("b")!.textContent = t.step(ORDER.indexOf(stage) + 1);
+		stepEl.querySelector("small")!.textContent = t[stage];
+		skipBtn.hidden = stage === "front";
 	};
 	showCue(t.preparing, "warn");
 	showStage();
@@ -211,21 +240,26 @@ export function openBodyScan({ who, onDone }: BodyScanOptions): () => void {
 	/** What is still wrong with the pose, or null when it can be captured. */
 	function problem(lms: Lm[] | undefined, aspect: number): string | null {
 		if (!lms) return t.nobody;
-		if (!wholeBody(lms, stage === "side")) return t.frame;
+		if (!wholeBody(lms, viewOf(stage), gone)) return t.frame;
 		const dir = facing(lms, aspect);
-		if (stage === "front") {
-			if (dir !== "front") return t.faceMe;
-			if (!armsClear(lms, aspect)) return t.arms;
-		} else if (dir !== "side") return t.turn;
+		if (stage === "front" || stage === "back") {
+			// front and back look alike in width; which shoulder is on which side tells them apart
+			if (dir !== "front" || towardCamera(lms) !== (stage === "front"))
+				return stage === "front" ? t.faceMe : t.turnBack;
+			if (!armsClear(lms, aspect, gone)) return t.arms;
+		} else if (dir !== "side") return stage === "side" ? t.turn : t.turnOther;
+		else if (stage === "side2" && sideFacing(lms) === firstSide)
+			return t.turnOther;
 		return null;
 	}
 
-	function finish(sides: Frame[]) {
+	function finish() {
 		const scan = measureAll(fronts, sides, who);
 		if (!scan) {
 			// start over rather than hand back a wrong body
 			stage = "front";
 			fronts = [];
+			sides = [];
 			showStage();
 			showCue((cueKey = t.failed), "bad");
 			say(t.failed);
@@ -276,7 +310,8 @@ export function openBodyScan({ who, onDone }: BodyScanOptions): () => void {
 			const issue = problem(lms, aspect);
 			draw(lms, !issue);
 
-			const moved = !!anchor && !!lms && drift(anchor, lms) > STILL;
+			const moved =
+				!!anchor && !!lms && drift(anchor, lms, viewOf(stage), gone) > STILL;
 			if (issue || !lms || moved) {
 				// far from the phone the tracking flickers: a short dropout does not restart the hold
 				if (anchor && now - lastGood < GRACE) {
@@ -311,6 +346,7 @@ export function openBodyScan({ who, onDone }: BodyScanOptions): () => void {
 					lms,
 					w: video.videoWidth,
 					h: video.videoHeight,
+					view: viewOf(stage),
 					mask: mask && {
 						data: mask.getAsFloat32Array().slice(),
 						w: mask.width,
@@ -329,13 +365,23 @@ export function openBodyScan({ who, onDone }: BodyScanOptions): () => void {
 			heldSince = 0;
 			anchor = null;
 			holdEl.hidden = true;
-			if (stage === "front") {
-				fronts = taken;
-				stage = "side";
-				showStage();
-				showCue((cueKey = t.turn), "warn");
-				say(t.saySide);
-			} else finish(taken);
+			if (stage === "front" || stage === "back") fronts.push(...taken);
+			else {
+				sides.push(...taken);
+				if (stage === "side") firstSide = sideFacing(lms);
+			}
+			const next = ORDER[ORDER.indexOf(stage) + 1];
+			if (!next) return finish();
+			stage = next;
+			showStage();
+			const [cue, spoken] =
+				next === "side"
+					? [t.turn, t.saySide]
+					: next === "back"
+						? [t.turnBack, t.sayBack]
+						: [t.turnOther, t.sayOther];
+			showCue((cueKey = cue), "warn");
+			say(spoken);
 		};
 		loop();
 	}
@@ -357,7 +403,7 @@ export function openBodyScan({ who, onDone }: BodyScanOptions): () => void {
 	sheet.addEventListener("click", (e) => {
 		const b = (e.target as Element).closest<HTMLElement>("[data-scan]");
 		if (!b) return;
-		if (b.dataset.scan === "skip" && fronts.length) finish([]);
+		if (b.dataset.scan === "skip" && fronts.length) finish();
 		else close();
 	});
 	sheet.addEventListener("keydown", (e) => {

@@ -49,6 +49,12 @@ export interface BodyScan {
   torso: number; upperArm: number; forearm: number; thigh: number; shin: number;
 }
 
+export type Limb = 'armL' | 'armR' | 'legL' | 'legR';
+/** How much of a limb is absent: everything below the elbow or knee, or the whole limb. */
+export type LimbGap = 'lower' | 'whole';
+/** Limbs the user does not have, as they told us; the body, the scan and the figure follow it. */
+export type Absent = Partial<Record<Limb, LimbGap>>;
+
 export interface Profile {
   name: string;
   goal: Goal;
@@ -67,6 +73,7 @@ export interface Profile {
   waist?: number;
   hip?: number;
   chest?: number;
+  absent?: Absent;
   /** optional target body weight (kg) for the weight tracker */
   goalWeight?: number;
   /** where and how it hurts, marked on the body map; `limits` is derived from this */
@@ -143,6 +150,7 @@ export interface SetLog {
 export interface Session {
   date: string;
   ts: number;
+  /** index of the plan day that was trained; -1 for moves logged on their own from the library */
   day: number;
   minutes: number;
   sets: number;

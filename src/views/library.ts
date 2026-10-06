@@ -7,9 +7,10 @@ import {
 	MUSCLE_NAME,
 } from "../data/exercises";
 import { getLocale, localeTag } from "../i18n";
-import { isPremium } from "../store";
+import { sessionKcal } from "../body";
+import { isPremium, state, update } from "../store";
 import type { Equip } from "../types";
-import { $, $$, buzz, fa, go } from "../utils";
+import { $, $$, buzz, dayKey, fa, go } from "../utils";
 import {
 	backIcon,
 	checkIcon,
@@ -18,11 +19,12 @@ import {
 	mountMannequin,
 	mountThumbs,
 	proBadge,
+	toast,
 	type Cleanup,
 	type View,
 } from "./ui";
 import type { Exercise } from "../types";
-import { history as exHistory } from "../progression";
+import { history as exHistory, isLoaded, starterKg } from "../progression";
 import { sparkline } from "./account";
 
 const LEVEL = {
@@ -34,6 +36,13 @@ const LEVEL = {
 const libraryText = {
 	fa: {
 		history: "سابقه‌ی تو",
+		logMove: "این حرکت را انجام دادم",
+		logSave: "ثبت کن",
+		logSets: "ست",
+		logReps: "تکرار در هر ست",
+		logSecs: "ثانیه در هر ست",
+		logKg: "وزنه (کیلو)",
+		logged: "ثبت شد. در سابقه و آمارت آمد.",
 		setup: "حالت شروع",
 		move: "اجرای حرکت",
 		cues: "حواست به این‌ها باشد",
@@ -66,6 +75,13 @@ const libraryText = {
 	},
 	en: {
 		history: "Your history",
+		logMove: "I did this move",
+		logSave: "Save",
+		logSets: "sets",
+		logReps: "reps per set",
+		logSecs: "seconds per set",
+		logKg: "weight (kg)",
+		logged: "Saved. It is in your history and stats now.",
 		setup: "Starting position",
 		move: "How to perform",
 		cues: "Watch for these",
@@ -99,6 +115,13 @@ const libraryText = {
 	},
 	tr: {
 		history: "Geçmişin",
+		logMove: "Bu hareketi yaptım",
+		logSave: "Kaydet",
+		logSets: "set",
+		logReps: "set başına tekrar",
+		logSecs: "set başına saniye",
+		logKg: "ağırlık (kg)",
+		logged: "Kaydedildi. Geçmişinde ve istatistiklerinde görünüyor.",
 		setup: "Başlangıç pozisyonu",
 		move: "Nasıl yapılır",
 		cues: "Bunlara dikkat et",
@@ -274,6 +297,35 @@ export const exerciseView: View = (root, params) => {
 	const locked = ex.premium && !isPremium();
 	const alts = alternatives(ex.id);
 
+	// logging the move on its own, outside a plan session: sets, reps (or seconds) and the weight used
+	const prof = state.profile;
+	const canLog = !locked && !!prof;
+	const log = {
+		sets: 3,
+		reps: ex.timed ? 30 : 10,
+		kg: prof && isLoaded(ex) ? (state.loads[ex.id] ?? starterKg(ex, prof)) : 0,
+	};
+	const showLog = (k: keyof typeof log) =>
+		k === "kg" ? fa(String(log.kg).replace(".", "٫")) : fa(log[k]);
+	const stepper = (k: keyof typeof log, label: string) => `
+    <div class="stepper" role="group" aria-label="${label}">
+      <button data-step="${k}" data-d="-1" aria-label="− ${label}">−</button>
+      <output><b>${showLog(k)}</b><small>${label}</small></output>
+      <button data-step="${k}" data-d="1" aria-label="+ ${label}">+</button>
+    </div>`;
+	const logHTML = () => `
+      <section class="log-box">
+        <button class="btn btn-main" data-act="logopen">${checkIcon}${text.logMove}</button>
+        <div class="log-form" hidden>
+          <div class="logger">
+            ${stepper("sets", text.logSets)}
+            ${stepper("reps", ex.timed ? text.logSecs : text.logReps)}
+            ${log.kg ? stepper("kg", text.logKg) : ""}
+          </div>
+          <button class="btn btn-main" data-act="logsave">${text.logSave}</button>
+        </div>
+      </section>`;
+
 	root.innerHTML = `
     <section class="detail">
       <header class="detail-top">
@@ -321,7 +373,8 @@ export const exerciseView: View = (root, params) => {
         ${ex.muscles.map((m) => `<span class="m">${MUSCLE_NAME[m]}</span>`).join("")}
       </div>
       <p class="why">${ex.guide.why}</p>
-      ${locked ? "" : historyHTML(ex)}
+      ${canLog ? logHTML() : ""}
+      <div class="history-slot">${locked ? "" : historyHTML(ex)}</div>
       ${locked ? "" : guideHTML(ex)}
       ${
 				alts.length
@@ -353,10 +406,59 @@ export const exerciseView: View = (root, params) => {
 
 	root.addEventListener("click", (e) => {
 		const t = (e.target as Element).closest<HTMLElement>(
-			"[data-act],[data-view],[data-form]",
+			"[data-act],[data-view],[data-form],[data-step]",
 		);
 		if (!t) return;
 		buzz();
+		if (t.dataset.step) {
+			const k = t.dataset.step as keyof typeof log;
+			const d = Number(t.dataset.d);
+			if (k === "sets") log.sets = Math.min(10, Math.max(1, log.sets + d));
+			else if (k === "reps")
+				log.reps = ex.timed
+					? Math.min(600, Math.max(5, log.reps + d * 5))
+					: Math.min(200, Math.max(1, log.reps + d));
+			else
+				log.kg = Math.max(
+					0.5,
+					Math.round((log.kg + d * (ex.equip === "barbell" ? 2.5 : 0.5)) * 2) / 2,
+				);
+			t.parentElement!.querySelector("output b")!.textContent = showLog(k);
+			return;
+		}
+		if (t.dataset.act === "logopen") {
+			$(".log-form", root)!.hidden = false;
+			t.hidden = true;
+			return;
+		}
+		if (t.dataset.act === "logsave" && prof) {
+			// about three seconds a rep, and a short rest after every set
+			const work = log.sets * (ex.timed ? log.reps : log.reps * 3);
+			const minutes = Math.max(1, Math.round((work + log.sets * 45) / 60));
+			update((st) => {
+				st.sessions.push({
+					date: dayKey(),
+					ts: Date.now(),
+					day: -1,
+					minutes,
+					sets: log.sets,
+					feel: "ok",
+					kcal: sessionKcal(prof, minutes),
+					logs: Array.from({ length: log.sets }, (_, i) => ({
+						id: ex.id,
+						set: i + 1,
+						reps: log.reps,
+						kg: log.kg || undefined,
+					})),
+				});
+				if (log.kg) st.loads[ex.id] = log.kg;
+			});
+			toast(text.logged, 2600);
+			$(".log-form", root)!.hidden = true;
+			$('[data-act="logopen"]', root)!.hidden = false;
+			$(".history-slot", root)!.innerHTML = historyHTML(ex);
+			return;
+		}
 		if (t.dataset.form) {
 			const i = Number(t.dataset.form);
 			const w = i >= 0 ? ex.wrong![i] : null;

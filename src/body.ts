@@ -1,6 +1,6 @@
 import { BASE_L, DEFAULT_SHAPE, type BodyShape } from "./engine/pose";
 import { getLocale, type Locale } from "./i18n";
-import type { BodyScan, Goal, Profile, Sex } from "./types";
+import type { Absent, BodyScan, Goal, Profile, Sex } from "./types";
 import { clamp } from "./utils";
 
 /**
@@ -153,6 +153,7 @@ export interface BodyInput {
 	hip?: number;
 	chest?: number;
 	scan?: BodyScan;
+	absent?: Absent;
 }
 
 /** Population-average circumferences (cm) for a height/BMI, used when the user skips measuring. */
@@ -291,6 +292,7 @@ export function shapeFor(b: BodyInput | null | undefined): BodyShape {
 				shin: shin / guess.shin,
 			},
 			shoulderHalf: sc ? shoulderHalf : undefined,
+			absent: b.absent,
 		},
 	};
 }

@@ -122,6 +122,12 @@ const localeText = (locale: "fa" | "en" | "tr") => ({
 			: locale === "tr"
 				? "Bugünün düzeltici hareketleri tamamlandı. Tebrikler!"
 				: "Today's corrective moves are done. Nice!",
+	rehabSkipped:
+		locale === "fa"
+			? "بیشتر حرکت‌ها رد شدند؛ امروز به‌عنوان انجام‌شده ثبت نشد."
+			: locale === "tr"
+				? "Hareketlerin çoğu atlandı; bugün yapıldı olarak kaydedilmedi."
+				: "Most moves were skipped, so today was not marked as done.",
 	main:
 		locale === "fa"
 			? "تمرین اصلی"
@@ -333,6 +339,8 @@ export const workoutView: View = (root, params) => {
 
 	const totalSets = steps.reduce((a, s) => a + s.sets, 0);
 	let doneSets = 0;
+	/** moves carried through to their last set (a skipped move is not one) */
+	let movesDone = 0;
 
 	function setRing(sec: number, total: number) {
 		ring.hidden = false;
@@ -437,6 +445,12 @@ export const workoutView: View = (root, params) => {
 	/** The corrective routine has no sets to log and nothing to rate: mark the day and leave. */
 	function finishRehab() {
 		clearInterval(tick);
+		// the day counts only when at least half of the routine was really done
+		if (movesDone * 2 < steps.length) {
+			toast(t.rehabSkipped, 3200);
+			go("#/rehab");
+			return;
+		}
 		update((st) => {
 			const days = new Set(st.rehabDays ?? []);
 			days.add(dayKey());
@@ -571,6 +585,7 @@ export const workoutView: View = (root, params) => {
 			render();
 			return;
 		}
+		movesDone++;
 		advance(s.section === "main" && steps[si + 1]?.section === "main");
 	}
 

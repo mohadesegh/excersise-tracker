@@ -7,9 +7,12 @@ import { limitsFromPains, painsFromLimits } from "../rehab";
 import { girth } from "../scan/measure";
 import { openBodyScan } from "../scan/scanner";
 import type {
+	Absent,
 	BodyScan,
 	Goal,
 	Level,
+	Limb,
+	LimbGap,
 	Pain,
 	Place,
 	Profile,
@@ -51,7 +54,40 @@ interface Draft {
 	waist?: number;
 	hip?: number;
 	chest?: number;
+	absent?: Absent;
 }
+
+/** The limb-difference choices: for each limb, what the user has of it. */
+const LIMB_TEXT = {
+	fa: {
+		title: "تفاوت اندام",
+		optional: "(اختیاری)",
+		help: "اگر دست یا پایی نداری، این‌جا بگو تا آدمک و اسکن با بدن خودت جور باشند.",
+		limbs: { armL: "دست چپ", armR: "دست راست", legL: "پای چپ", legR: "پای راست" },
+		full: "کامل",
+		arm: { lower: "از آرنج به پایین ندارم", whole: "از شانه ندارم" },
+		leg: { lower: "از زانو به پایین ندارم", whole: "از لگن ندارم" },
+	},
+	en: {
+		title: "Limb difference",
+		optional: "(optional)",
+		help: "If you do not have an arm or a leg, say so here and the figure and the scan will match your body.",
+		limbs: { armL: "Left arm", armR: "Right arm", legL: "Left leg", legR: "Right leg" },
+		full: "Complete",
+		arm: { lower: "None below the elbow", whole: "None from the shoulder" },
+		leg: { lower: "None below the knee", whole: "None from the hip" },
+	},
+	tr: {
+		title: "Uzuv farklılığı",
+		optional: "(isteğe bağlı)",
+		help: "Bir kolun ya da bacağın yoksa burada belirt; figür ve tarama vücuduna uysun.",
+		limbs: { armL: "Sol kol", armR: "Sağ kol", legL: "Sol bacak", legR: "Sağ bacak" },
+		full: "Tam",
+		arm: { lower: "Dirsekten aşağısı yok", whole: "Omuzdan itibaren yok" },
+		leg: { lower: "Dizden aşağısı yok", whole: "Kalçadan itibaren yok" },
+	},
+} as const;
+const LIMBS: Limb[] = ["armL", "armR", "legL", "legR"];
 
 const BODY_FIELDS = (locale: Locale) => {
 	const labels = {
@@ -518,6 +554,7 @@ export const quizView: View = (root) => {
 				waist: p.waist,
 				hip: p.hip,
 				chest: p.chest,
+				absent: p.absent ? { ...p.absent } : undefined,
 			}
 		: { pains: [], name: "", age: 28, height: 170, weight: 70 };
 	const steps = buildSteps(locale);
@@ -564,6 +601,7 @@ export const quizView: View = (root) => {
 				hip: d.hip,
 				chest: d.chest,
 				scan: d.scan,
+				absent: d.absent,
 			}),
 		);
 
@@ -654,6 +692,20 @@ export const quizView: View = (root) => {
             <label><span>${bodyText.hip}</span><input class="field" inputmode="decimal" data-m="hip" placeholder="${locale === "fa" ? "سانتی‌متر" : locale === "tr" ? "cm" : "cm"}" value="${d.hip ? fa(d.hip) : ""}"></label>
             <label><span>${st.chest}</span><input class="field" inputmode="decimal" data-m="chest" placeholder="${locale === "fa" ? "سانتی‌متر" : locale === "tr" ? "cm" : "cm"}" value="${d.chest ? fa(d.chest) : ""}"></label>
           </div>
+        </details>
+        <details class="more-measures" ${d.absent && Object.keys(d.absent).length ? "open" : ""}>
+          <summary>${LIMB_TEXT[locale].title} <span class="muted">${LIMB_TEXT[locale].optional}</span></summary>
+          <p class="muted">${LIMB_TEXT[locale].help}</p>
+          <div class="measure-row">${LIMBS.map((limb) => {
+						const lt = LIMB_TEXT[locale];
+						const opts = limb.startsWith("arm") ? lt.arm : lt.leg;
+						const cur = d.absent?.[limb] ?? "";
+						return `<label><span>${lt.limbs[limb]}</span><select class="field" data-limb="${limb}">
+              <option value="" ${cur === "" ? "selected" : ""}>${lt.full}</option>
+              <option value="lower" ${cur === "lower" ? "selected" : ""}>${opts.lower}</option>
+              <option value="whole" ${cur === "whole" ? "selected" : ""}>${opts.whole}</option>
+            </select></label>`;
+					}).join("")}</div>
         </details>
         <button class="btn btn-main" data-act="next" ${d.sex ? "" : "disabled"}>${t("continue", locale)}</button>`;
 		} else if (s.key === "scan") {
@@ -754,6 +806,7 @@ export const quizView: View = (root) => {
 				age: d.age,
 				height: d.height,
 				weight: d.weight,
+				absent: d.absent,
 			},
 			onDone: (result) => {
 				closeScan = null;
@@ -783,6 +836,7 @@ export const quizView: View = (root) => {
 			waist: d.waist,
 			hip: d.hip,
 			chest: d.chest,
+			absent: d.absent,
 			createdAt: Date.now(),
 		};
 		const placeText =
@@ -890,6 +944,15 @@ export const quizView: View = (root) => {
 
 	root.addEventListener("input", (e) => {
 		const r = e.target as HTMLInputElement;
+		const limb = r.dataset.limb as Limb | undefined;
+		if (limb) {
+			const absent = { ...d.absent };
+			if (r.value) absent[limb] = r.value as LimbGap;
+			else delete absent[limb];
+			d.absent = Object.keys(absent).length ? absent : undefined;
+			reshape();
+			return;
+		}
 		const m = r.dataset.m as Measure | undefined;
 		if (m) {
 			const v = parseFaNumber(r.value);

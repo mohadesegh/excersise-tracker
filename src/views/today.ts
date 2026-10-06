@@ -18,7 +18,7 @@ import { isPremium, state, update } from "../store";
 import type { Session } from "../types";
 import { $, dayKey, fa } from "../utils";
 import { getLocale, setLocale, t, type Locale } from "../i18n";
-import { exerciseName } from "../data/exercises";
+import { EX, exerciseName } from "../data/exercises";
 import { regionName, routineFor, routineMinutes } from "../rehab";
 import { rehabDoneToday } from "./rehab";
 import {
@@ -69,10 +69,14 @@ function weekStart(d = new Date()): Date {
 	return s;
 }
 
+/** Sessions of the plan; moves logged on their own from the library are not among them. */
+export const planSessions = (sessions: Session[]): Session[] =>
+	sessions.filter((s) => s.day >= 0);
+
 export function weekCounts(sessions: Session[], weeks: number): number[] {
 	const start = weekStart();
 	const out = new Array(weeks).fill(0);
-	for (const s of sessions) {
+	for (const s of planSessions(sessions)) {
 		const diff = Math.floor(
 			(start.getTime() - weekStart(new Date(s.ts)).getTime()) /
 				(7 * 86_400_000) +
@@ -105,7 +109,7 @@ export function nextDayIndex(): number {
 		.map((d, k) => ({ d, k }))
 		.filter(({ d }) => isPremium() || !d.premiumOnly)
 		.map(({ k }) => k);
-	const last = state.sessions[state.sessions.length - 1];
+	const last = planSessions(state.sessions).pop();
 	if (!last) return open[0];
 	const pos = open.indexOf(last.day);
 	return open[(pos + 1) % open.length];
@@ -144,7 +148,7 @@ export const todayView: View = (root, _p, query) => {
 	const day = plan.days[nextIdx];
 	const streak = weekStreak();
 	const ws = weekStart();
-	const doneDates = new Set(state.sessions.map((s) => s.date));
+	const doneDates = new Set(planSessions(state.sessions).map((s) => s.date));
 	const thisWeek = weekCounts(state.sessions, 1)[0];
 	const target = Math.min(prof.days, pro ? 7 : FREE_DAYS);
 
@@ -162,9 +166,30 @@ export const todayView: View = (root, _p, query) => {
 		.join("");
 
 	const wk = weekInfo(plan);
+	// moves logged on their own today (from a move's page), summed per move
+	const loggedToday = new Map<string, { sets: number; reps: number; kg?: number }>();
+	for (const ses of state.sessions) {
+		if (ses.day >= 0 || ses.date !== dayKey()) continue;
+		for (const l of ses.logs ?? []) {
+			const cur = loggedToday.get(l.id);
+			loggedToday.set(l.id, { sets: (cur?.sets ?? 0) + 1, reps: l.reps, kg: l.kg ?? cur?.kg });
+		}
+	}
+	const doneDose = (id: string, timed: boolean) => {
+		const l = loggedToday.get(id)!;
+		return `✓ ${dose(l.reps, timed, l.sets)}${l.kg ? `<small>${kgText(l.kg, locale)}</small>` : ""}`;
+	};
+	const planned = new Set<string>();
+
 	const items = day.items
 		.map((it) => {
 			const { ex } = resolve(it, pro);
+			planned.add(ex.id);
+			if (loggedToday.has(ex.id))
+				return `<li><a class="ex-row done" href="#/ex/${ex.id}">
+        <canvas class="thumb" data-thumb="${ex.id}" aria-hidden="true"></canvas>
+        <span class="ex-row-name">${exerciseName(ex.id, locale)}</span>
+        <span class="ex-row-dose">${doneDose(ex.id, it.timed)}</span></a></li>`;
 			const reps = Math.max(
 				it.timed ? 10 : 4,
 				it.reps + (pro && !isLoaded(ex) ? (state.adjust[ex.id] ?? 0) : 0),
@@ -176,6 +201,23 @@ export const todayView: View = (root, _p, query) => {
         <span class="ex-row-dose">${dose(reps, it.timed, setsThisWeek(it.sets, wk))}${kg ? `<small>${kgText(kg, locale)}</small>` : ""}</span></a></li>`;
 		})
 		.join("");
+
+	// logged today but not part of this session: listed on their own
+	const extras = [...loggedToday.keys()]
+		.filter((id) => !planned.has(id) && EX[id])
+		.map(
+			(id) => `<li><a class="ex-row done" href="#/ex/${id}">
+        <canvas class="thumb" data-thumb="${id}" aria-hidden="true"></canvas>
+        <span class="ex-row-name">${exerciseName(id, locale)}</span>
+        <span class="ex-row-dose">${doneDose(id, !!EX[id].timed)}</span></a></li>`,
+		)
+		.join("");
+	const extrasTitle =
+		locale === "fa"
+			? "امروز جدا از برنامه انجام دادی"
+			: locale === "tr"
+				? "Bugün programın dışında yaptıkların"
+				: "Done today outside your plan";
 
 	const others = plan.days
 		.map((d, k) => {
@@ -375,6 +417,12 @@ export const todayView: View = (root, _p, query) => {
         <ul class="ex-list">${items}</ul>
         <a class="btn btn-main" href="#/workout/${nextIdx}">${nextWorkoutText}</a>
       </article>
+
+      ${
+				extras
+					? `<article class="session-card"><h2 class="h3">${extrasTitle}</h2><ul class="ex-list">${extras}</ul></article>`
+					: ""
+			}
 
       <a class="rcard ${pains.length ? "" : "quiet"}" href="#/rehab">
         <div><b>${rehabCard.title}</b><span>${rehabCard.text}</span></div>
