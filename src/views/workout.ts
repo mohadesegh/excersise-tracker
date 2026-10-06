@@ -1,6 +1,7 @@
 import { sessionKcal } from "../body";
 import { EX, exerciseName } from "../data/exercises";
 import { cooldownFor, progressionDelta, resolve, warmupFor } from "../planner";
+import { routineFor } from "../rehab";
 import {
 	applyLoads,
 	isLoaded,
@@ -36,7 +37,7 @@ import {
 import { doseLine, lines, LINES, restLine, setLine } from "../voiceLines";
 import { getLocale, setLocale } from "../i18n";
 
-type Section = "warmup" | "main" | "cooldown";
+type Section = "warmup" | "main" | "cooldown" | "rehab";
 interface Step {
 	ex: Exercise;
 	section: Section;
@@ -109,6 +110,18 @@ const localeText = (locale: "fa" | "en" | "tr") => ({
 			: locale === "tr"
 				? "Soğutma ve esneme"
 				: "Cool-down & stretch",
+	rehab:
+		locale === "fa"
+			? "حرکات اصلاحی"
+			: locale === "tr"
+				? "Düzeltici hareketler"
+				: "Corrective moves",
+	rehabDone:
+		locale === "fa"
+			? "حرکات اصلاحی امروز انجام شد. آفرین!"
+			: locale === "tr"
+				? "Bugünün düzeltici hareketleri tamamlandı. Tebrikler!"
+				: "Today's corrective moves are done. Nice!",
 	main:
 		locale === "fa"
 			? "تمرین اصلی"
@@ -194,52 +207,78 @@ export const workoutView: View = (root, params) => {
 	setLocale(locale);
 	const plan = state.plan!;
 	const prof = state.profile!;
-	const dayIdx = Number(params[0]);
-	const day = plan.days[dayIdx];
 	const pro = isPremium();
-	if (!day || (day.premiumOnly && !pro)) {
-		go("#/pro");
-		return;
-	}
 	const wk = weekInfo(plan);
+	// #/workout/rehab plays the corrective routine instead of a training day
+	const built =
+		params[0] === "rehab" ? rehabSteps() : daySteps(Number(params[0]));
+	if (!built) return;
+	const steps: Step[] = built;
+	const rehab = steps[0].section === "rehab";
+	const dayIdx = Number(params[0]);
 
-	const steps: Step[] = [
-		...warmupFor(day, prof).map(
-			(w): Step => ({
-				ex: EX[w.id],
-				section: "warmup",
+	function rehabSteps(): Step[] | null {
+		const routine = routineFor(prof.pains ?? []);
+		if (!routine.length) {
+			go("#/rehab");
+			return null;
+		}
+		return routine.map(
+			(r): Step => ({
+				ex: EX[r.id],
+				section: "rehab",
 				sets: 1,
-				reps: w.secs,
+				reps: r.secs,
 				timed: true,
 				rest: 0,
 			}),
-		),
-		...day.items.map((item): Step => {
-			const { ex } = resolve(item, pro);
-			const reps = Math.max(
-				item.timed ? 10 : 4,
-				item.reps + (pro && !isLoaded(ex) ? (state.adjust[ex.id] ?? 0) : 0),
-			);
-			return {
-				ex,
-				section: "main",
-				sets: setsThisWeek(item.sets, wk),
-				reps,
-				timed: item.timed,
-				rest: item.rest,
-			};
-		}),
-		...cooldownFor(day, prof).map(
-			(c): Step => ({
-				ex: EX[c.id],
-				section: "cooldown",
-				sets: 1,
-				reps: c.secs,
-				timed: true,
-				rest: 0,
+		);
+	}
+
+	function daySteps(idx: number): Step[] | null {
+		const day = plan.days[idx];
+		if (!day || (day.premiumOnly && !pro)) {
+			go("#/pro");
+			return null;
+		}
+		return [
+			...warmupFor(day, prof).map(
+				(w): Step => ({
+					ex: EX[w.id],
+					section: "warmup",
+					sets: 1,
+					reps: w.secs,
+					timed: true,
+					rest: 0,
+				}),
+			),
+			...day.items.map((item): Step => {
+				const { ex } = resolve(item, pro);
+				const reps = Math.max(
+					item.timed ? 10 : 4,
+					item.reps + (pro && !isLoaded(ex) ? (state.adjust[ex.id] ?? 0) : 0),
+				);
+				return {
+					ex,
+					section: "main",
+					sets: setsThisWeek(item.sets, wk),
+					reps,
+					timed: item.timed,
+					rest: item.rest,
+				};
 			}),
-		),
-	];
+			...cooldownFor(day, prof).map(
+				(c): Step => ({
+					ex: EX[c.id],
+					section: "cooldown",
+					sets: 1,
+					reps: c.secs,
+					timed: true,
+					rest: 0,
+				}),
+			),
+		];
+	}
 
 	let si = 0;
 	let set = 1;
@@ -368,7 +407,7 @@ export const workoutView: View = (root, params) => {
 			const first = si === 0 || steps[si - 1].section !== s.section;
 			return void say(
 				lines(
-					first && L[s.section],
+					first && (s.section === "rehab" ? t.rehab : L[s.section]),
 					name,
 					doseLine(s.reps, true, 0, locale),
 					s.ex.guide.cues[0],
@@ -387,7 +426,25 @@ export const workoutView: View = (root, params) => {
 	}
 
 	const sectionName = (section: Section) =>
-		section === "warmup" ? t.warmup : section === "main" ? t.main : t.cooldown;
+		section === "warmup"
+			? t.warmup
+			: section === "main"
+				? t.main
+				: section === "rehab"
+					? t.rehab
+					: t.cooldown;
+
+	/** The corrective routine has no sets to log and nothing to rate: mark the day and leave. */
+	function finishRehab() {
+		clearInterval(tick);
+		update((st) => {
+			const days = new Set(st.rehabDays ?? []);
+			days.add(dayKey());
+			st.rehabDays = [...days].sort().slice(-60);
+		});
+		toast(t.rehabDone);
+		go("#/rehab");
+	}
 
 	function render() {
 		announce();
@@ -520,6 +577,7 @@ export const workoutView: View = (root, params) => {
 	function advance(withRest: boolean) {
 		const s = steps[si];
 		if (si >= steps.length - 1) {
+			if (rehab) return finishRehab();
 			phase = "feel";
 			render();
 			return;
@@ -540,6 +598,7 @@ export const workoutView: View = (root, params) => {
 			si++;
 		}
 		if (si >= steps.length) {
+			if (rehab) return finishRehab();
 			si = steps.length - 1;
 			phase = "feel";
 		} else enterStep();
@@ -677,7 +736,7 @@ export const workoutView: View = (root, params) => {
 								: "This unfinished workout will not be saved. Leave?",
 					)
 				)
-					go("#/today");
+					go(rehab ? "#/rehab" : "#/today");
 				break;
 			case "go":
 				phase = "work";

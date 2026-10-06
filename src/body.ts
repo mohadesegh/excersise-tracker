@@ -1,6 +1,6 @@
-import { DEFAULT_SHAPE, type BodyShape } from "./engine/pose";
+import { BASE_L, DEFAULT_SHAPE, type BodyShape } from "./engine/pose";
 import { getLocale, type Locale } from "./i18n";
-import type { Goal, Profile, Sex } from "./types";
+import type { BodyScan, Goal, Profile, Sex } from "./types";
 import { clamp } from "./utils";
 
 /**
@@ -151,6 +151,8 @@ export interface BodyInput {
 	age?: number;
 	waist?: number;
 	hip?: number;
+	chest?: number;
+	scan?: BodyScan;
 }
 
 /** Population-average circumferences (cm) for a height/BMI, used when the user skips measuring. */
@@ -177,6 +179,13 @@ const ellipse = (C: number, ratio: number) => {
 	return { w, d: w * ratio };
 };
 
+/** Circumference of an ellipse (Ramanujan) from its width and depth, in the same unit. */
+export const perimeter = (w: number, d: number): number => {
+	const a = w / 2,
+		b = d / 2;
+	return Math.PI * (3 * (a + b) - Math.sqrt((3 * a + b) * (a + 3 * b)));
+};
+
 /** Build a mannequin with the user's proportions: height, mass, sex, waist and hips. */
 export function shapeFor(b: BodyInput | null | undefined): BodyShape {
 	if (!b || !b.height || !b.weight) return DEFAULT_SHAPE;
@@ -187,7 +196,7 @@ export function shapeFor(b: BodyInput | null | undefined): BodyShape {
 	const est = estimateCirc(b);
 	const waistC = (b.waist ?? est.waist) / 100;
 	const hipC = Math.max((b.hip ?? est.hip) / 100, waistC * 0.85);
-	const chestC = est.chest / 100;
+	const chestC = (b.chest ?? est.chest) / 100;
 
 	const waist = ellipse(waistC, clamp(0.68 + ff * 0.12, 0.6, 0.95));
 	const hip = ellipse(hipC, clamp(0.66 + ff * 0.06, 0.6, 0.85));
@@ -196,9 +205,51 @@ export function shapeFor(b: BodyInput | null | undefined): BodyShape {
 		clamp(0.62 + ff * 0.08 + (sx < 0 ? 0.04 : 0), 0.58, 0.85),
 	);
 
-	const arm = 0.085 * Math.sqrt(hs) * (1 + 0.3 * ff) + sx * 0.004;
-	const thigh = 0.13 * Math.sqrt(hs) * (1 + 0.3 * ff) + (sx < 0 ? 0.012 : 0);
-	const shoulderHalf = (0.19 + sx * 0.016) * hs + ff * 0.01;
+	// a camera scan replaces the population estimates with the user's own cross-sections
+	const sc = b.scan;
+	// girth follows weight roughly with its square root
+	const k = sc ? clamp(Math.sqrt(b.weight / sc.kg), 0.85, 1.2) / 100 : 0;
+	if (sc) {
+		const fit = (
+			e: { w: number; d: number },
+			w?: number,
+			d?: number,
+			tape?: number,
+		) => {
+			const ratio = e.d / e.w;
+			if (w) e.w = w * k;
+			e.d = d ? d * k : e.w * ratio;
+			// a girth the user typed in still decides the size: the scan only gives the cross-section its shape
+			if (tape) {
+				const s = tape / 100 / perimeter(e.w, e.d);
+				e.w *= s;
+				e.d *= s;
+			}
+		};
+		fit(waist, sc.waistW, sc.waistD, b.waist);
+		fit(hip, sc.hipW, sc.hipD, b.hip);
+		fit(chest, sc.chestW, sc.chestD, b.chest);
+	}
+
+	/**
+	 * A scanned limb replaces the build-based guess. `draw` is how much slimmer
+	 * the model draws that limb than a real one of average build.
+	 */
+	const limb = (guess: number, cm: number | undefined, draw: number) =>
+		cm ? clamp(cm * k * draw, guess * 0.75, guess * 1.5) : guess;
+	const arm = limb(
+		0.085 * Math.sqrt(hs) * (1 + 0.3 * ff) + sx * 0.004,
+		sc?.armW,
+		0.92,
+	);
+	const thigh = limb(
+		0.13 * Math.sqrt(hs) * (1 + 0.3 * ff) + (sx < 0 ? 0.012 : 0),
+		sc?.thighW,
+		0.8,
+	);
+	const shoulderHalf = sc
+		? sc.shoulder / 200
+		: (0.19 + sx * 0.016) * hs + ff * 0.01;
 	const mid = (a: number, c: number) => (a + c) / 2;
 
 	const hipF = -0.01 - (hip.d - 0.2) * 0.3; // glutes sit behind the hip joints
@@ -223,10 +274,34 @@ export function shapeFor(b: BodyInput | null | undefined): BodyShape {
 			{ t: 0.97, w: shoulderHalf * 2 + arm * 0.5, d: chest.d * 0.75, f: 0.005 },
 		],
 		arm,
-		forearm: 0.068 * Math.sqrt(hs) * (1 + 0.22 * ff),
+		forearm: limb(0.068 * Math.sqrt(hs) * (1 + 0.22 * ff), sc?.forearmW, 0.85),
 		thigh,
-		shin: 0.09 * Math.sqrt(hs) * (1 + 0.22 * ff),
+		shin: limb(0.09 * Math.sqrt(hs) * (1 + 0.22 * ff), sc?.calfW, 0.8),
 		neck: 0.07 * (1 + 0.2 * ff) + sx * 0.006,
 		head: 0.1 * Math.pow(hs, 0.3),
+		len: sc ? scanLengths(sc, hs) : undefined,
+	};
+}
+
+/**
+ * The user's own proportions (long legs, short torso…) as multipliers on the
+ * model's segment lengths. Torso and legs are rescaled together so the
+ * mannequin keeps the height the user entered.
+ */
+function scanLengths(sc: BodyScan, hs: number): BodyShape["len"] {
+	const rel = (cm: number, base: number) =>
+		clamp(cm / 100 / (base * hs), 0.85, 1.18);
+	const torso = rel(sc.torso, BASE_L.torso);
+	const th = rel(sc.thigh, BASE_L.th);
+	const sh = rel(sc.shin, BASE_L.sh);
+	const stack =
+		(BASE_L.torso + BASE_L.th + BASE_L.sh) /
+		(BASE_L.torso * torso + BASE_L.th * th + BASE_L.sh * sh);
+	return {
+		torso: torso * stack,
+		th: th * stack,
+		sh: sh * stack,
+		ua: rel(sc.upperArm, BASE_L.ua),
+		fa: rel(sc.forearm, BASE_L.fa),
 	};
 }

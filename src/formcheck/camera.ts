@@ -24,13 +24,25 @@ const TASKS = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
 const MODEL =
 	"https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
 
-interface Landmarker {
-	detectForVideo(v: HTMLVideoElement, ts: number): { landmarks?: Lm[][] };
+/** Per-pixel "is this the person" confidence, 0..1; must be closed after use. */
+export interface PoseMask {
+	width: number;
+	height: number;
+	getAsFloat32Array(): Float32Array;
+	close(): void;
 }
-let landmarker: Promise<Landmarker> | null = null;
+export interface Landmarker {
+	detectForVideo(
+		v: HTMLVideoElement,
+		ts: number,
+	): { landmarks?: Lm[][]; segmentationMasks?: PoseMask[] };
+}
+const landmarkers: Partial<Record<"plain" | "masks", Promise<Landmarker>>> = {};
 
-function loadLandmarker(): Promise<Landmarker> {
-	landmarker ??= (async () => {
+/** The on-device pose model; `masks` also returns the body silhouette (used by the body scan). */
+export function loadLandmarker(masks = false): Promise<Landmarker> {
+	const key = masks ? "masks" : "plain";
+	const made = (landmarkers[key] ??= (async () => {
 		const url = `${TASKS}/vision_bundle.mjs`;
 		const mod = (await import(/* @vite-ignore */ url)) as {
 			FilesetResolver: { forVisionTasks(p: string): Promise<unknown> };
@@ -44,19 +56,20 @@ function loadLandmarker(): Promise<Landmarker> {
 				baseOptions: { modelAssetPath: MODEL, delegate },
 				runningMode: "VIDEO",
 				numPoses: 1,
+				outputSegmentationMasks: masks,
 			});
 		try {
 			return await make("GPU");
 		} catch {
 			return await make("CPU");
 		}
-	})();
-	landmarker.catch(() => (landmarker = null));
-	return landmarker;
+	})());
+	made.catch(() => delete landmarkers[key]);
+	return made;
 }
 
 /** Skeleton lines to draw over the video. */
-const BONES: [number, number][] = [
+export const BONES: [number, number][] = [
 	[11, 12],
 	[11, 13],
 	[13, 15],

@@ -740,6 +740,7 @@ export const profileView: View = (root, _p, query) => {
       </dl>
       <p class="fineprint">${locale === "fa" ? "این‌ها تخمین با فرمول‌های عمومی هستند. BMI عضله را از چربی تشخیص نمی‌دهد؛ اگر دور کمرت را وارد کنی، نسبت کمر به قد ملاک تصمیم‌ها می‌شود که دقیق‌تر است. برای رژیم غذایی دقیق با متخصص تغذیه مشورت کن." : locale === "tr" ? "Bunlar genel formüllere dayalı tahminlerdir. BMI kası yağdan ayırt edemez; bel çevreni girersen kararlar daha doğru olan bel-boy oranına göre verilir. Kişiye özel bir beslenme planı için bir diyetisyene danış." : "These are estimates based on general formulas. BMI can’t distinguish muscle from fat; if you enter your waist measurement, waist-to-height ratio is more accurate. Consult a nutrition specialist for a precise diet plan."}</p>
       <a class="btn btn-ghost" href="#/quiz">${text.changeAnswers}</a>
+      <a class="btn btn-ghost" href="#/rehab">${locale === "fa" ? "نقاط درد و حرکات اصلاحی" : locale === "tr" ? "Ağrı noktaları ve düzeltici hareketler" : "Painful spots and corrective moves"}</a>
 
       ${cloudEnabled() ? accountHTML() : ""}
 

@@ -11,6 +11,44 @@ export type Muscle = 'quads' | 'glutes' | 'hams' | 'chest' | 'back' | 'shoulders
 export type Feel = 'easy' | 'ok' | 'hard';
 export type Sex = 'm' | 'f' | 'x';
 
+/** Places on the body map; L/R are the user's own left and right. */
+export type PainRegion =
+  | 'neck' | 'upperBack' | 'lowerBack'
+  | 'shoulderL' | 'shoulderR' | 'elbowL' | 'elbowR' | 'wristL' | 'wristR'
+  | 'hipL' | 'hipR' | 'kneeL' | 'kneeR' | 'ankleL' | 'ankleR';
+/** How it hurts: sharp, dull ache, stiffness, shooting down the limb, numbness or tingling. */
+export type PainKind = 'sharp' | 'ache' | 'stiff' | 'radiating' | 'numb';
+/** When it is worst. */
+export type PainWhen = 'move' | 'sitting' | 'morning' | 'night';
+
+export interface Pain {
+  region: PainRegion;
+  kind: PainKind;
+  /** 1 (barely there) to 10 (unbearable) */
+  level: number;
+  when: PainWhen;
+}
+
+/**
+ * Measurements from the camera body scan, in centimetres. Only these numbers
+ * are kept; the camera image itself is never stored.
+ */
+export interface BodyScan {
+  date: string;
+  /** body weight at scan time, so girths can follow later weight changes */
+  kg: number;
+  /** shoulder joint to shoulder joint */
+  shoulder: number;
+  /** torso width from the front view and depth from the side view (absent when that view was unusable) */
+  chestW?: number; chestD?: number;
+  waistW?: number; waistD?: number;
+  hipW?: number; hipD?: number;
+  /** limb thickness seen from the front (absent when the silhouette was unclear) */
+  armW?: number; forearmW?: number; thighW?: number; calfW?: number;
+  /** segment lengths */
+  torso: number; upperArm: number; forearm: number; thigh: number; shin: number;
+}
+
 export interface Profile {
   name: string;
   goal: Goal;
@@ -28,8 +66,12 @@ export interface Profile {
   /** optional circumferences in cm; estimated from BMI when missing */
   waist?: number;
   hip?: number;
+  chest?: number;
   /** optional target body weight (kg) for the weight tracker */
   goalWeight?: number;
+  /** where and how it hurts, marked on the body map; `limits` is derived from this */
+  pains?: Pain[];
+  scan?: BodyScan;
   createdAt: number;
 }
 
@@ -53,8 +95,8 @@ export interface Exercise {
   avoid: Limit[];
   premium: boolean;
   timed?: boolean;
-  /** warm-up and stretching moves are not used as main training slots */
-  kind?: 'warmup' | 'stretch';
+  /** warm-up, stretching and corrective moves are not used as main training slots */
+  kind?: 'warmup' | 'stretch' | 'rehab';
   /** wrong-form demonstrations for the 3D viewer */
   wrong?: WrongForm[];
   /** jumping / landing moves, swapped out for heavier or older bodies */
@@ -129,6 +171,8 @@ export interface AppState {
   weights: { date: string; kg: number; waist?: number; hip?: number }[];
   /** current working weight per exercise (kg) */
   loads: Record<string, number>;
+  /** days (YYYY-MM-DD) on which the corrective routine was completed; recent ones only */
+  rehabDays?: string[];
   /** last local change, for sync conflict resolution */
   updatedAt?: number;
 }

@@ -1,11 +1,23 @@
-import { EX, IDLE } from "../data/exercises";
+import { A_POSE, EX, IDLE } from "../data/exercises";
 import type { Mannequin } from "../engine/mannequin";
 import { shapeFor } from "../body";
 import { buildPlan } from "../planner";
 import { state, update } from "../store";
-import type { Goal, Level, Limit, Place, Profile, Sex } from "../types";
+import { limitsFromPains, painsFromLimits } from "../rehab";
+import { girth } from "../scan/measure";
+import { openBodyScan } from "../scan/scanner";
+import type {
+	BodyScan,
+	Goal,
+	Level,
+	Pain,
+	Place,
+	Profile,
+	Sex,
+} from "../types";
 import { $, $$, buzz, dayKey, esc, fa, go, parseFaNumber } from "../utils";
-import { backIcon, checkIcon, mountMannequin, type View } from "./ui";
+import { mountPainMap } from "./painmap";
+import { backIcon, mountMannequin, type Cleanup, type View } from "./ui";
 import { getLocale, setLocale, t, type Locale } from "../i18n";
 
 interface Option {
@@ -19,7 +31,6 @@ interface Step {
 	key: keyof Draft | "body";
 	q: string;
 	sub?: string;
-	multi?: boolean;
 	compact?: boolean;
 	options?: Option[];
 }
@@ -30,7 +41,8 @@ interface Draft {
 	place?: Place;
 	days?: number;
 	minutes?: number;
-	limits: Limit[];
+	pains: Pain[];
+	scan?: BodyScan;
 	name: string;
 	sex?: Sex;
 	age: number;
@@ -38,6 +50,7 @@ interface Draft {
 	weight: number;
 	waist?: number;
 	hip?: number;
+	chest?: number;
 }
 
 const BODY_FIELDS = (locale: Locale) => {
@@ -101,12 +114,6 @@ const CHEERS = {
 	tr: ["Harika!", "Kaydedildi", "Güzel", "Mükemmel"],
 } as const;
 
-const NO_ISSUE = {
-	fa: "نه، مشکلی ندارم",
-	en: "No, I have no issues",
-	tr: "Hayır, sorunum yok",
-} as const;
-
 const buildSteps = (locale: Locale): Step[] => {
 	const q = {
 		fa: {
@@ -119,8 +126,12 @@ const buildSteps = (locale: Locale): Step[] => {
 			days: "هفته‌ای چند روز؟",
 			daysSub: "کمتر و پیوسته، بهتر از زیاد و نصفه‌نیمه است.",
 			minutes: "هر جلسه چقدر وقت داری؟",
-			limits: "جایی از بدنت اذیتت می‌کند؟",
-			limitsSub: "حرکت‌های پرفشار برای آن ناحیه کنار گذاشته می‌شوند.",
+			scan: "بدنت را اسکن کنیم؟",
+			scanSub:
+				"دوربین اندازه‌های بدنت را می‌گیرد و آدمک سه‌بعدی را شبیه خودت می‌سازد. هیچ عکسی ذخیره نمی‌شود.",
+			pains: "کجای بدنت درد دارد؟",
+			painsSub:
+				"روی بدن خودت نشان بده. حرکت‌های پرفشار برای آن ناحیه کنار می‌روند و حرکت اصلاحی می‌گیری.",
 			name: "آخرین سؤال: اسمت چیه؟",
 			nameSub: "اختیاری است؛ فقط برای اینکه صدایت کنیم.",
 		},
@@ -134,8 +145,12 @@ const buildSteps = (locale: Locale): Step[] => {
 			days: "How many days per week?",
 			daysSub: "Less, but consistent, is better than too much and half-done.",
 			minutes: "How much time do you have per session?",
-			limits: "Does any part of your body bother you?",
-			limitsSub: "High-impact moves for that area are skipped.",
+			scan: "Shall we scan your body?",
+			scanSub:
+				"The camera takes your measurements and shapes the 3D figure like you. No picture is saved.",
+			pains: "Where does your body hurt?",
+			painsSub:
+				"Show it on your own body. Hard moves for that area are left out and you get corrective moves.",
 			name: "One last question: what is your name?",
 			nameSub: "Optional; just so we know what to call you.",
 		},
@@ -150,8 +165,12 @@ const buildSteps = (locale: Locale): Step[] => {
 			daysSub:
 				"Daha az ama düzenli olmak, çok ama yarım yamalak olandan daha iyidir.",
 			minutes: "Her seans ne kadar zamanın var?",
-			limits: "Vücudunda seni rahatsız eden bir yer var mı?",
-			limitsSub: "Bu bölgede yüksek etkili hareketler atlanır.",
+			scan: "Vücudunu tarayalım mı?",
+			scanSub:
+				"Kamera ölçülerini alır ve 3D figürü sana benzetir. Hiçbir fotoğraf kaydedilmez.",
+			pains: "Vücudunun neresi ağrıyor?",
+			painsSub:
+				"Kendi vücudunun üzerinde göster. O bölgeyi zorlayan hareketler çıkarılır ve düzeltici hareketler alırsın.",
 			name: "Son soru: adın ne?",
 			nameSub: "İsteğe bağlı; sadece sana adınla hitap etmek için.",
 		},
@@ -255,6 +274,7 @@ const buildSteps = (locale: Locale): Step[] => {
 			],
 		},
 		{ key: "body", q: q.body, sub: q.bodySub },
+		{ key: "scan", q: q.scan, sub: q.scanSub },
 		{
 			key: "place",
 			q: q.place,
@@ -388,37 +408,92 @@ const buildSteps = (locale: Locale): Step[] => {
 				},
 			],
 		},
-		{
-			key: "limits",
-			q: q.limits,
-			sub: q.limitsSub,
-			multi: true,
-			options: [
-				{
-					v: "knee",
-					emoji: "🦵",
-					label: locale === "fa" ? "زانو" : locale === "tr" ? "Diz" : "Knee",
-					ex: "bridge",
-				},
-				{
-					v: "back",
-					emoji: "🧍",
-					label: locale === "fa" ? "کمر" : locale === "tr" ? "Bel" : "Back",
-					ex: "birddog",
-				},
-				{
-					v: "shoulder",
-					emoji: "🤷",
-					label:
-						locale === "fa" ? "شانه" : locale === "tr" ? "Omuz" : "Shoulder",
-					ex: "plank",
-				},
-				{ v: "none", emoji: "✅", label: NO_ISSUE[locale], ex: "jacks" },
-			],
-		},
+		{ key: "pains", q: q.pains, sub: q.painsSub },
 		{ key: "name", q: q.name, sub: q.nameSub },
 	];
 };
+
+const SCAN_TEXT = {
+	fa: {
+		start: "شروع اسکن با دوربین",
+		skip: "فعلاً نه",
+		again: "اسکن دوباره",
+		remove: "حذف اسکن",
+		done: "اسکن شد. آدمک حالا اندازه‌های خودت را دارد؛ با انگشت بچرخانش.",
+		drag: "آدمک را با انگشت بچرخان.",
+		shoulder: "عرض شانه",
+		chest: "دور سینه",
+		waist: "دور کمر",
+		hip: "دور باسن",
+		leg: "طول پا",
+		cm: "سانت",
+		approx:
+			"اعداد تخمین دوربین هستند. اگر با متر اندازه گرفته‌ای یا عددی درست نیست، همین‌جا اصلاحش کن.",
+		noPain: "دردی ندارم",
+	},
+	en: {
+		start: "Start the camera scan",
+		skip: "Not now",
+		again: "Scan again",
+		remove: "Remove scan",
+		done: "Scanned. The figure now has your measurements; turn it with your finger.",
+		drag: "Turn the figure with your finger.",
+		shoulder: "Shoulder width",
+		chest: "Chest",
+		waist: "Waist",
+		hip: "Hips",
+		leg: "Leg length",
+		cm: "cm",
+		approx:
+			"These are camera estimates. If you measured with a tape or a number is off, correct it here.",
+		noPain: "I have no pain",
+	},
+	tr: {
+		start: "Kamerayla taramayı başlat",
+		skip: "Şimdi değil",
+		again: "Yeniden tara",
+		remove: "Taramayı sil",
+		done: "Tarandı. Figür artık senin ölçülerinde; parmağınla döndür.",
+		drag: "Figürü parmağınla döndür.",
+		shoulder: "Omuz genişliği",
+		chest: "Göğüs çevresi",
+		waist: "Bel çevresi",
+		hip: "Kalça çevresi",
+		leg: "Bacak boyu",
+		cm: "cm",
+		approx:
+			"Bunlar kamera tahminidir. Mezurayla ölçtüysen ya da bir sayı yanlışsa buradan düzelt.",
+		noPain: "Ağrım yok",
+	},
+} as const;
+
+type Measure = "shoulder" | "chest" | "waist" | "hip";
+
+/** Accepted range of each editable measurement, in centimetres. */
+const MEASURE_RANGE: Record<Measure, [number, number]> = {
+	shoulder: [25, 65],
+	chest: [50, 200],
+	waist: [40, 200],
+	hip: [40, 200],
+};
+
+/**
+ * The measurements the figure is built from, as editable tape-measure numbers:
+ * what the user typed in wins, the camera's estimate fills the rest.
+ */
+function scanFields(
+	d: Pick<Draft, "chest" | "waist" | "hip">,
+	scan: BodyScan,
+	locale: Locale,
+): [Measure, string, number | null][] {
+	const st = SCAN_TEXT[locale];
+	return [
+		["shoulder", st.shoulder, Math.round(scan.shoulder)],
+		["chest", st.chest, d.chest ?? girth(scan.chestW, scan.chestD)],
+		["waist", st.waist, d.waist ?? girth(scan.waistW, scan.waistD)],
+		["hip", st.hip, d.hip ?? girth(scan.hipW, scan.hipD)],
+	];
+}
 
 export const quizView: View = (root) => {
 	const locale = getLocale();
@@ -431,7 +506,10 @@ export const quizView: View = (root) => {
 				place: p.place,
 				days: p.days,
 				minutes: p.minutes,
-				limits: [...p.limits],
+				pains: p.pains
+					? p.pains.map((x) => ({ ...x }))
+					: painsFromLimits(p.limits),
+				scan: p.scan,
 				name: p.name,
 				sex: p.sex,
 				age: p.age ?? 28,
@@ -439,14 +517,16 @@ export const quizView: View = (root) => {
 				weight: p.weight ?? 70,
 				waist: p.waist,
 				hip: p.hip,
+				chest: p.chest,
 			}
-		: { limits: [], name: "", age: 28, height: 170, weight: 70 };
+		: { pains: [], name: "", age: 28, height: 170, weight: 70 };
 	const steps = buildSteps(locale);
 	const bodyFields = BODY_FIELDS(locale);
+	const st = SCAN_TEXT[locale];
 	let i = 0;
-	let noneChosen = !!p && p.limits.length === 0;
-	let mq: Mannequin | null = null;
 	let timer = 0;
+	let painOff: Cleanup | null = null;
+	let closeScan: Cleanup | null = null;
 
 	root.innerHTML = `
     <section class="quiz">
@@ -455,22 +535,26 @@ export const quizView: View = (root) => {
         <div class="segbar" aria-hidden="true">${steps.map(() => "<span></span>").join("")}</div>
         <span class="quiz-count"></span>
       </header>
-      <div class="quiz-stage"><canvas aria-label="${locale === "fa" ? "پیش‌نمایش حرکت" : locale === "tr" ? "Hareket önizlemesi" : "Movement preview"}"></canvas><span class="cheer" aria-live="polite"></span></div>
+      <div class="quiz-stage"><canvas aria-label="${locale === "fa" ? "آدمک سه‌بعدی؛ برای چرخاندن بکشید" : locale === "tr" ? "3D figür; döndürmek için sürükle" : "3D figure; drag to rotate"}"></canvas><span class="cheer" aria-live="polite"></span></div>
       <div class="quiz-body"></div>
     </section>`;
 
 	const body = $(".quiz-body", root)!;
+	const stage = $(".quiz-stage", root)!;
 	const canvas = $<HTMLCanvasElement>(".quiz-stage canvas", root)!;
-	mq = mountMannequin(canvas, "squat", { spin: 0.35 });
+	const mq: Mannequin = mountMannequin(canvas, "squat", {
+		interactive: true,
+		spin: 0.35,
+	});
 
 	const preview = (exId: string) => {
 		const ex = EX[exId];
-		mq?.setAnim(ex.anim, ex.muscles);
+		mq.setAnim(ex.anim, ex.muscles);
 	};
 
-	/** the mannequin morphs as the user describes their body */
+	/** the mannequin morphs as the user describes (or scans) their body */
 	const reshape = () =>
-		mq?.setBody(
+		mq.setBody(
 			shapeFor({
 				sex: d.sex ?? "x",
 				age: d.age,
@@ -478,18 +562,23 @@ export const quizView: View = (root) => {
 				weight: d.weight,
 				waist: d.waist,
 				hip: d.hip,
+				chest: d.chest,
+				scan: d.scan,
 			}),
 		);
 
-	const selected = (s: Step, v: string): boolean => {
-		if (s.key === "body") return false;
-		if (s.key === "limits")
-			return v === "none" ? noneChosen : d.limits.includes(v as Limit);
-		return String(d[s.key] ?? "") === v;
-	};
+	const selected = (s: Step, v: string): boolean =>
+		s.key !== "body" && String(d[s.key] ?? "") === v;
 
 	function render() {
 		const s = steps[i];
+		if (painOff) {
+			painOff();
+			painOff = null;
+			mq.spinAgain();
+		}
+		// the steps about the user's own body give the 3D figure more room
+		stage.classList.toggle("tall", s.key === "scan" || s.key === "pains");
 		$$(".segbar span", root).forEach((el, k) =>
 			el.classList.toggle("on", k <= i),
 		);
@@ -538,10 +627,10 @@ export const quizView: View = (root) => {
 							: "(Optional, more precise)",
 				help:
 					locale === "fa"
-						? "با متر نواری: کمر در سطح ناف، باسن در پهن‌ترین قسمت. بدون این‌ها، از روی قد و وزن تخمین می‌زنیم."
+						? "با متر نواری: کمر در سطح ناف، باسن و سینه در پهن‌ترین قسمت. بدون این‌ها، از روی قد و وزن تخمین می‌زنیم."
 						: locale === "tr"
-							? "Mezura ile: bel göbek seviyesinde, kalça en geniş noktada. Bunlar yoksa boy ve ağırlığa göre tahmin edilir."
-							: "With a tape: waist at navel level, hips at the widest point. Without these, we estimate from height and weight.",
+							? "Mezura ile: bel göbek seviyesinde, kalça ve göğüs en geniş noktada. Bunlar yoksa boy ve ağırlığa göre tahmin edilir."
+							: "With a tape: waist at navel level, hips and chest at the widest point. Without these, we estimate from height and weight.",
 			};
 			inner += `<div class="sexes" role="radiogroup" aria-label="${locale === "fa" ? "جنسیت" : locale === "tr" ? "Cinsiyet" : "Gender"}">${sexes
 				.map(
@@ -557,33 +646,52 @@ export const quizView: View = (root) => {
           </label>`,
 					)
 					.join("")}</div>
-        <details class="more-measures" ${d.waist || d.hip ? "open" : ""}>
-          <summary>${locale === "fa" ? "اندازه‌ی دور کمر و باسن" : locale === "tr" ? "Bel ve kalça ölçüsü" : "Waist and hip measurements"} <span class="muted">${bodyText.optional}</span></summary>
+        <details class="more-measures" ${d.waist || d.hip || d.chest ? "open" : ""}>
+          <summary>${locale === "fa" ? "اندازه‌ی دور کمر، باسن و سینه" : locale === "tr" ? "Bel, kalça ve göğüs ölçüsü" : "Waist, hip and chest measurements"}<span class="muted">${bodyText.optional}</span></summary>
           <p class="muted">${bodyText.help}</p>
           <div class="measure-row">
             <label><span>${bodyText.waist}</span><input class="field" inputmode="decimal" data-m="waist" placeholder="${locale === "fa" ? "سانتی‌متر" : locale === "tr" ? "cm" : "cm"}" value="${d.waist ? fa(d.waist) : ""}"></label>
             <label><span>${bodyText.hip}</span><input class="field" inputmode="decimal" data-m="hip" placeholder="${locale === "fa" ? "سانتی‌متر" : locale === "tr" ? "cm" : "cm"}" value="${d.hip ? fa(d.hip) : ""}"></label>
+            <label><span>${st.chest}</span><input class="field" inputmode="decimal" data-m="chest" placeholder="${locale === "fa" ? "سانتی‌متر" : locale === "tr" ? "cm" : "cm"}" value="${d.chest ? fa(d.chest) : ""}"></label>
           </div>
         </details>
         <button class="btn btn-main" data-act="next" ${d.sex ? "" : "disabled"}>${t("continue", locale)}</button>`;
+		} else if (s.key === "scan") {
+			inner += d.scan
+				? `<p class="scan-done" role="status">${st.done}</p>
+           <div class="measure-row">${scanFields(d, d.scan, locale)
+							.map(
+								([m, label, cm]) =>
+									`<label><span>${label} <small>(${st.cm})</small></span><input class="field" inputmode="decimal" data-m="${m}" value="${cm ? fa(cm) : ""}"></label>`,
+							)
+							.join("")}</div>
+           <p class="fineprint">${st.approx}</p>
+           <button class="btn btn-main" data-act="next">${t("continue", locale)}</button>
+           <div class="row">
+             <button class="btn btn-quiet" data-act="scan">${st.again}</button>
+             <button class="btn btn-quiet" data-act="unscan">${st.remove}</button>
+           </div>`
+				: `<p class="muted">${st.drag}</p>
+           <button class="btn btn-main" data-act="scan">📷 ${st.start}</button>
+           <button class="btn btn-quiet" data-act="next">${st.skip}</button>`;
+		} else if (s.key === "pains") {
+			inner += `<div class="pm-host"></div>
+        <button class="btn btn-main" data-act="next"></button>`;
 		} else if (s.options) {
-			inner += `<div class="opts ${s.compact ? "opts-compact" : ""}" role="${s.multi ? "group" : "radiogroup"}">
+			inner += `<div class="opts ${s.compact ? "opts-compact" : ""}" role="radiogroup">
         ${s.options
 					.map(
 						(
 							o,
 						) => `<button class="opt ${selected(s, o.v) ? "sel" : ""}" data-v="${o.v}" data-ex="${o.ex}"
-              role="${s.multi ? "checkbox" : "radio"}" aria-checked="${selected(s, o.v)}">
+              role="radio" aria-checked="${selected(s, o.v)}">
               ${o.emoji ? `<span class="opt-emoji" aria-hidden="true">${o.emoji}</span>` : ""}
               <span class="opt-label">${o.label}</span>
               ${o.hint ? `<span class="opt-hint">${o.hint}</span>` : ""}
-              ${s.multi ? `<span class="opt-check">${checkIcon}</span>` : ""}
             </button>`,
 					)
 					.join("")}
       </div>`;
-			if (s.multi)
-				inner += `<button class="btn btn-main" data-act="next" ${d.limits.length || noneChosen ? "" : "disabled"}>${t("continue", locale)}</button>`;
 		} else {
 			const namePlaceholder =
 				locale === "fa"
@@ -601,9 +709,21 @@ export const quizView: View = (root) => {
 		body.classList.add("enter");
 		const sel = s.options?.find((o) => selected(s, o.v));
 		if (sel) preview(sel.ex);
-		if (s.key === "body") {
-			mq?.setAnim(IDLE);
+		if (s.key === "body" || s.key === "scan") {
+			mq.setAnim(IDLE);
 			reshape();
+		}
+		if (s.key === "pains") {
+			mq.setAnim(A_POSE);
+			reshape();
+			const nextBtn = $<HTMLButtonElement>('[data-act="next"]', body)!;
+			const label = () => {
+				nextBtn.textContent = d.pains.length
+					? t("continue", locale)
+					: st.noPain;
+			};
+			label();
+			painOff = mountPainMap($(".pm-host", body)!, mq, d.pains, label);
 		}
 		const focusTarget = body.querySelector<HTMLElement>(
 			".opt.sel, .opt, .field",
@@ -627,6 +747,23 @@ export const quizView: View = (root) => {
 		}
 	}
 
+	function scan() {
+		closeScan = openBodyScan({
+			who: {
+				sex: d.sex ?? "x",
+				age: d.age,
+				height: d.height,
+				weight: d.weight,
+			},
+			onDone: (result) => {
+				closeScan = null;
+				d.scan = result;
+				render();
+				cheer();
+			},
+		});
+	}
+
 	function finish() {
 		d.name = ($<HTMLInputElement>("#q-name", root)?.value ?? "").trim();
 		const profile: Profile = {
@@ -636,13 +773,16 @@ export const quizView: View = (root) => {
 			place: d.place!,
 			days: d.days!,
 			minutes: d.minutes!,
-			limits: d.limits,
+			limits: limitsFromPains(d.pains),
+			pains: d.pains,
+			scan: d.scan,
 			sex: d.sex ?? "x",
 			age: d.age,
 			height: d.height,
 			weight: d.weight,
 			waist: d.waist,
 			hip: d.hip,
+			chest: d.chest,
 			createdAt: Date.now(),
 		};
 		const placeText =
@@ -663,33 +803,38 @@ export const quizView: View = (root) => {
         <li>${locale === "fa" ? `انتخاب حرکت‌ها متناسب با ${placeText}` : locale === "tr" ? `Antrenman yerine uygun hareketler seçiliyor: ${placeText}` : `Selecting moves that suit: ${placeText}`}</li>
         <li>${locale === "fa" ? "تنظیم ست و تکرار برای هدفت" : locale === "tr" ? "Hedefin için set ve tekrar ayarı" : "Set and rep targets for your goal"}</li>
         <li>${locale === "fa" ? `چیدن ${fa(profile.days)} جلسه در هفته` : locale === "tr" ? `Haftada ${fa(profile.days)} seans planlanıyor` : `Scheduling ${fa(profile.days)} sessions per week`}</li>
+        ${d.pains.length ? `<li>${locale === "fa" ? "انتخاب حرکت‌های اصلاحی برای نقاط دردناک" : locale === "tr" ? "Ağrıyan bölgeler için düzeltici hareketler seçiliyor" : "Choosing corrective moves for the painful spots"}</li>` : ""}
       </ul></div>`;
-		$$(".build-steps li", body).forEach((li, k) =>
+		const lis = $$(".build-steps li", body);
+		lis.forEach((li, k) =>
 			setTimeout(() => li.classList.add("done"), 350 + k * 420),
 		);
-		timer = window.setTimeout(() => {
-			update((s) => {
-				s.profile = profile;
-				s.plan = buildPlan(profile);
-				s.adjust = {};
-				const today = dayKey();
-				const last = s.weights[s.weights.length - 1];
-				if (
-					!last ||
-					last.kg !== profile.weight ||
-					last.waist !== profile.waist
-				) {
-					s.weights = s.weights.filter((x) => x.date !== today);
-					s.weights.push({
-						date: today,
-						kg: profile.weight,
-						waist: profile.waist,
-						hip: profile.hip,
-					});
-				}
-			});
-			go("#/today?new=1");
-		}, 1700);
+		timer = window.setTimeout(
+			() => {
+				update((s) => {
+					s.profile = profile;
+					s.plan = buildPlan(profile);
+					s.adjust = {};
+					const today = dayKey();
+					const last = s.weights[s.weights.length - 1];
+					if (
+						!last ||
+						last.kg !== profile.weight ||
+						last.waist !== profile.waist
+					) {
+						s.weights = s.weights.filter((x) => x.date !== today);
+						s.weights.push({
+							date: today,
+							kg: profile.weight,
+							waist: profile.waist,
+							hip: profile.hip,
+						});
+					}
+				});
+				go("#/today?new=1");
+			},
+			440 + lis.length * 420,
+		);
 	}
 
 	root.addEventListener("click", (e) => {
@@ -709,43 +854,26 @@ export const quizView: View = (root) => {
 			reshape();
 			return;
 		}
-		if (target.dataset.act === "back") {
-			if (i > 0) {
-				i--;
-				render();
-			} else go("#/profile");
-			return;
+		switch (target.dataset.act) {
+			case "back":
+				if (i > 0) {
+					i--;
+					render();
+				} else go("#/profile");
+				return;
+			case "next":
+				return next();
+			case "finish":
+				return finish();
+			case "scan":
+				return scan();
+			case "unscan":
+				d.scan = undefined;
+				return render();
 		}
-		if (target.dataset.act === "next") return next();
-		if (target.dataset.act === "finish") return finish();
 
 		const v = target.dataset.v!;
 		preview(target.dataset.ex!);
-		if (s.multi) {
-			if (v === "none") {
-				noneChosen = true;
-				d.limits = [];
-			} else {
-				noneChosen = false;
-				d.limits = d.limits.includes(v as Limit)
-					? d.limits.filter((x) => x !== v)
-					: [...d.limits, v as Limit];
-			}
-
-			$$("[data-v]", body).forEach((o) => {
-				const item = o as HTMLElement;
-				const itemValue = item.dataset.v as string | undefined;
-				const isSelected =
-					itemValue === "none"
-						? noneChosen
-						: d.limits.includes(itemValue as Limit);
-				item.classList.toggle("sel", isSelected);
-				item.setAttribute("aria-checked", String(isSelected));
-			});
-			const nextBtn = $<HTMLButtonElement>('[data-act="next"]', body);
-			if (nextBtn) nextBtn.disabled = !(d.limits.length || noneChosen);
-			return;
-		}
 		if (s.key === "goal") d.goal = v as Goal;
 		else if (s.key === "place") d.place = v as Place;
 		else if (s.key === "level") d.level = Number(v) as Level;
@@ -762,9 +890,14 @@ export const quizView: View = (root) => {
 
 	root.addEventListener("input", (e) => {
 		const r = e.target as HTMLInputElement;
-		if (r.dataset.m === "waist" || r.dataset.m === "hip") {
+		const m = r.dataset.m as Measure | undefined;
+		if (m) {
 			const v = parseFaNumber(r.value);
-			d[r.dataset.m] = v >= 40 && v <= 200 ? v : undefined;
+			const [min, max] = MEASURE_RANGE[m];
+			const ok = v >= min && v <= max;
+			// the shoulder width only exists in the scan; the girths are the user's own numbers
+			if (m !== "shoulder") d[m] = ok ? v : undefined;
+			else if (ok && d.scan) d.scan = { ...d.scan, shoulder: v };
 			reshape();
 			return;
 		}
@@ -785,6 +918,8 @@ export const quizView: View = (root) => {
 	render();
 	return () => {
 		clearTimeout(timer);
-		mq?.destroy();
+		painOff?.();
+		closeScan?.();
+		mq.destroy();
 	};
 };

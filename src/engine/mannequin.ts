@@ -1,5 +1,6 @@
 import { DEFAULT_SHAPE, sample, solve, type BodyShape, type PoseAnim, type SegName, type Vec } from './pose';
-import type { Muscle } from '../types';
+import type { Muscle, PainRegion } from '../types';
+import { regionSpots } from './regions';
 import { reducedMotion } from '../utils';
 import { glRenderer, rgb, type Cone, type Cylinder, type Ellipsoid, type Palette, type Scene, type Slab, type V3 } from './gl';
 
@@ -92,6 +93,12 @@ export class Mannequin {
   private shape: BodyShape = DEFAULT_SHAPE;
   /** bounding cylinder of the whole movement, for framing */
   private fit = { r: 0.6, top: 1.8 };
+  /** body map: null = off; otherwise every region is tappable and the listed ones are marked (value = intensity 1..10) */
+  private spots: Map<PainRegion, number> | null = null;
+  /** where the tappable spots were last drawn, in canvas pixels */
+  private hits: { id: PainRegion; x: number; y: number }[] = [];
+  /** Called when the user taps a body-map spot (needs `interactive`). */
+  onPick: ((id: PainRegion) => void) | null = null;
   speed = 1;
   showMuscles = true;
 
@@ -117,6 +124,13 @@ export class Mannequin {
     this.shape = shape;
     this.measure();
     this.draw();
+  }
+
+  /** Turn the body map on (marked regions with their intensity) or off (null). */
+  setSpots(marked: Partial<Record<PainRegion, number>> | null): void {
+    this.spots = marked ? new Map(Object.entries(marked) as [PainRegion, number][]) : null;
+    if (!marked) this.hits = [];
+    this.kick();
   }
 
   /** Sample the whole loop once so the camera frames every frame of it, not just the current one. */
@@ -205,7 +219,11 @@ export class Mannequin {
       this.kick();
     });
     const end = () => { this.dragging = false; };
-    c.addEventListener('pointerup', end);
+    c.addEventListener('pointerup', (e) => {
+      const tap = this.dragging && Math.hypot(e.clientX - x0, e.clientY - y0) < 8;
+      end();
+      if (tap) this.pick(e.clientX, e.clientY);
+    });
     c.addEventListener('pointercancel', end);
     c.tabIndex = 0;
     c.addEventListener('keydown', (e) => {
@@ -217,6 +235,26 @@ export class Mannequin {
       this.opts.onView?.(this.yaw, this.pitch);
       this.kick();
     });
+  }
+
+  /** A tap on the body map: the nearest spot within a fingertip. */
+  private pick(clientX: number, clientY: number): void {
+    if (!this.spots || !this.onPick) return;
+    const r = this.canvas.getBoundingClientRect();
+    const k = this.canvas.width / (r.width || 1);
+    const x = (clientX - r.left) * k, y = (clientY - r.top) * k;
+    let best: PainRegion | null = null, bd = 30 * k;
+    for (const h of this.hits) {
+      const d = Math.hypot(h.x - x, h.y - y);
+      if (d < bd) { bd = d; best = h.id; }
+    }
+    if (best) this.onPick(best);
+  }
+
+  /** Let the idle spin start again (after a preset view or a drag stopped it). */
+  spinAgain(): void {
+    this.touched = false;
+    this.kick();
   }
 
   /** Rotate to a preset view (front / side / back). */
@@ -479,6 +517,7 @@ export class Mannequin {
       const img = gl.render(w, h, this.scene(sk, R), { rot, cam: CAM, ox: ox * q, oy: oy * q, scale: scale * q }, this.palette());
       ctx.imageSmoothingQuality = 'high';
       ctx.drawImage(img, 0, 0, w, h, 0, 0, W, H);
+      this.drawSpots(sk, proj, scale);
       if (!this.opts.still) {
         frameAvg = frameAvg * 0.9 + (performance.now() - t0) * 0.1;
         if (frameAvg > 26 && pixelBudget > 50_000) { pixelBudget *= 0.8; frameAvg = 16; }
@@ -682,5 +721,59 @@ export class Mannequin {
 
     items.sort((a, b) => a.z - b.z);
     for (const it of items) it.draw();
+    this.drawSpots(sk, proj, scale);
+  }
+
+  /** Body map: a ring on every spot that faces the viewer, a glowing dot on the marked ones. */
+  private drawSpots(sk: ReturnType<typeof solve>, proj: (v: Vec) => [number, number, number, number], scale: number): void {
+    if (!this.spots) return;
+    const { ctx } = this;
+    const cy = Math.cos(this.yaw), sy = Math.sin(this.yaw);
+    const cp = Math.cos(this.pitch), sp = Math.sin(this.pitch);
+    const dpr = this.canvas.width / (this.canvas.getBoundingClientRect().width || 1);
+    const pulse = reducedMotion() ? 0.5 : 0.5 + 0.5 * Math.sin(this.time * 3);
+    const ring = this.palette().dark ? '255,255,255' : '12,14,20';
+    const hot = rgb(this.colors.muscle, [0.88, 0.11, 0.28]).map((v) => Math.round(v * 255)).join(',');
+    this.hits = [];
+    ctx.save();
+    for (const s of regionSpots(sk, this.shape)) {
+      // toward the viewer = positive depth after the same yaw and pitch as the camera
+      const facing = s.n[1] * sp + (-s.n[0] * sy + s.n[2] * cy) * cp;
+      const level = this.spots.get(s.id);
+      const hidden = facing < s.cut;
+      if (hidden && level === undefined) continue;
+      const q = proj(s.p);
+      const r = Math.max(5 * dpr, scale * 0.022 * q[3]);
+      if (!hidden) this.hits.push({ id: s.id, x: q[0], y: q[1] });
+      if (level === undefined) {
+        ctx.fillStyle = `rgba(${ring},.14)`;
+        ctx.strokeStyle = `rgba(${ring},.5)`;
+        ctx.lineWidth = 1.5 * dpr;
+        ctx.beginPath(); ctx.arc(q[0], q[1], r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        continue;
+      }
+      if (hidden) {
+        // marked on the far side: only a hollow ring shows through, so it is not mistaken for the near side
+        ctx.strokeStyle = `rgba(${hot},.55)`;
+        ctx.lineWidth = 1.5 * dpr;
+        ctx.setLineDash([3 * dpr, 3 * dpr]);
+        ctx.beginPath(); ctx.arc(q[0], q[1], r, 0, Math.PI * 2); ctx.stroke();
+        ctx.setLineDash([]);
+        continue;
+      }
+      const k = 1.5 + level * 0.14 + pulse * 0.45;
+      const glow = ctx.createRadialGradient(q[0], q[1], r * 0.3, q[0], q[1], r * k * 1.6);
+      glow.addColorStop(0, `rgba(${hot},1)`);
+      glow.addColorStop(1, `rgba(${hot},0)`);
+      ctx.fillStyle = glow;
+      ctx.globalAlpha = 0.55;
+      ctx.beginPath(); ctx.arc(q[0], q[1], r * k * 1.6, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = this.colors.muscle;
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 2 * dpr;
+      ctx.beginPath(); ctx.arc(q[0], q[1], r * 1.1, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    }
+    ctx.restore();
   }
 }

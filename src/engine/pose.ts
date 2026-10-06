@@ -127,6 +127,8 @@ export interface BodyShape {
   shin: number;
   neck: number;
   head: number;
+  /** per-segment length multipliers on top of `scale` (from a body scan); 1 when absent */
+  len?: Partial<Record<keyof typeof BASE_L, number>>;
 }
 
 export const DEFAULT_SHAPE: BodyShape = {
@@ -145,7 +147,7 @@ export const DEFAULT_SHAPE: BodyShape = {
 };
 
 /* base lengths at 170 cm */
-const BASE_L = { torso: 0.5, ua: 0.29, fa: 0.26, th: 0.43, sh: 0.42, ft: 0.13 };
+export const BASE_L = { torso: 0.5, ua: 0.29, fa: 0.26, th: 0.43, sh: 0.42, ft: 0.13 };
 
 const ease = (t: number) => t * t * (3 - 2 * t);
 
@@ -212,7 +214,9 @@ const norm3 = (v: Vec): Vec => { const l = Math.hypot(v[0], v[1], v[2]) || 1; re
 
 function fk(p: Required<Pose>, shape: BodyShape, tilt: number, feet: 'flat' | 'toes' | 'point'): Raw {
   const sc = shape.scale;
-  const L = { torso: BASE_L.torso * sc, ua: BASE_L.ua * sc, fa: BASE_L.fa * sc, th: BASE_L.th * sc, sh: BASE_L.sh * sc, ft: BASE_L.ft * sc };
+  const m = shape.len ?? {};
+  const len = (k: keyof typeof BASE_L) => BASE_L[k] * sc * (m[k] ?? 1);
+  const L = { torso: len('torso'), ua: len('ua'), fa: len('fa'), th: len('th'), sh: len('sh'), ft: len('ft') };
   const root = rx(p.rp + tilt);
   const torso = mul(root, rx(p.spine));
   const pelvis: Vec = [0, 0, 0];

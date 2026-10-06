@@ -3,6 +3,7 @@ import type { Exercise, Muscle, Pattern } from "../types";
 import { GUIDES } from "./guides";
 import { GUIDES_EN } from "./guides.en";
 import { GUIDES_TR } from "./guides.tr";
+import { REHAB_GUIDES } from "./guides.rehab";
 import { WRONG, wrongLabel } from "./wrong";
 import { getLocale, type Locale } from "../i18n";
 
@@ -21,6 +22,37 @@ const rep = (
 	beats: [down, hold, up, rest],
 	dur: down + hold + up + rest,
 });
+
+/** Lying on the back, one knee drawn to the chest by the hand on that side, the other foot planted. */
+const kneeHug = (side: "l" | "r"): Pose => {
+	const up = { hf: 118, ha: 6, k: 125, sf: 25, sa: -10, e: 60 };
+	const down = { hf: 55, ha: 8, k: 105, sf: 0, sa: 14, e: 0 };
+	const [l, r] = side === "l" ? [up, down] : [down, up];
+	return pose({
+		rp: -90,
+		lhf: l.hf,
+		lha: l.ha,
+		lk: l.k,
+		lsf: l.sf,
+		lsa: l.sa,
+		le: l.e,
+		rhf: r.hf,
+		rha: r.ha,
+		rk: r.k,
+		rsf: r.sf,
+		rsa: r.sa,
+		re: r.e,
+	});
+};
+
+/** Standing with the arms held away from the body: every joint is easy to tap on the body map. */
+export const A_POSE: PoseAnim = {
+	dur: 4,
+	frames: [
+		pose(arms(0, 30, 0, 6), legs(0, 9, 2)),
+		pose({ spine: 1 }, arms(0, 31, 0, 8), legs(0, 9, 3)),
+	],
+};
 
 /** Relaxed standing with slow breathing: used to show off the user's own body shape. */
 export const IDLE: PoseAnim = {
@@ -776,6 +808,298 @@ const RAW: Omit<Exercise, "guide">[] = [
 			],
 		},
 	},
+
+	/* ---------- corrective moves (prescribed from the pain map) ---------- */
+	{
+		id: "neckstretch",
+		name: "کشش پشت گردن",
+		pattern: "mobility",
+		kind: "rehab",
+		muscles: ["shoulders"],
+		equip: "none",
+		level: 1,
+		avoid: [],
+		premium: false,
+		timed: true,
+		anim: rep(stand, pose(stand, { neck: 38 }), 1.5, 2.5, 1.5, 0.5),
+	},
+	{
+		id: "wallangel",
+		name: "فرشته‌ی دیوار",
+		pattern: "mobility",
+		kind: "rehab",
+		muscles: ["shoulders", "back"],
+		equip: "none",
+		level: 1,
+		avoid: [],
+		premium: false,
+		timed: true,
+		anim: rep(
+			pose(arms(0, 80, 90, 90), legs()),
+			pose(arms(0, 150, 90, 25), legs()),
+			1.6,
+			0.4,
+			1.6,
+			0.4,
+		),
+	},
+	{
+		id: "pendulum",
+		name: "آونگ شانه",
+		pattern: "mobility",
+		kind: "rehab",
+		muscles: ["shoulders"],
+		equip: "none",
+		level: 1,
+		avoid: [],
+		premium: false,
+		timed: true,
+		anim: {
+			dur: 2.4,
+			frames: [
+				pose({ spine: 55 }, legs(8, 8, 14), {
+					lsf: 40,
+					lsa: 4,
+					le: 4,
+					rsf: 25,
+					rsa: 6,
+					re: 70,
+				}),
+				pose({ spine: 55 }, legs(8, 8, 14), {
+					lsf: 72,
+					lsa: 4,
+					le: 4,
+					rsf: 25,
+					rsa: 6,
+					re: 70,
+				}),
+			],
+		},
+	},
+	{
+		id: "shoulderrot",
+		name: "چرخش خارجی شانه",
+		pattern: "mobility",
+		kind: "rehab",
+		muscles: ["shoulders"],
+		equip: "none",
+		level: 1,
+		avoid: [],
+		premium: false,
+		timed: true,
+		anim: rep(
+			pose(arms(0, 4, 0, 90), legs()),
+			pose(arms(0, 4, 45, 90), legs()),
+			1.2,
+			0.5,
+			1.2,
+			0.3,
+		),
+	},
+	{
+		id: "kneehug",
+		name: "زانو به سینه",
+		pattern: "mobility",
+		kind: "rehab",
+		muscles: ["back", "glutes"],
+		equip: "none",
+		level: 1,
+		avoid: [],
+		premium: false,
+		timed: true,
+		anim: {
+			dur: 7.4,
+			beats: [2.5, 1.2, 2.5, 1.2],
+			contacts: ["torso", "feet"],
+			feet: "flat",
+			frames: [
+				kneeHug("l"),
+				kneeHug("l"),
+				kneeHug("r"),
+				kneeHug("r"),
+			],
+		},
+	},
+	{
+		id: "slr",
+		name: "بالا آوردن پای صاف",
+		pattern: "mobility",
+		kind: "rehab",
+		muscles: ["quads", "core"],
+		equip: "none",
+		level: 1,
+		avoid: [],
+		premium: false,
+		timed: true,
+		anim: {
+			...rep(
+				pose({ rp: -90 }, arms(0, 14, 0, 0), {
+					lhf: 2,
+					lha: 5,
+					lk: 0,
+					rhf: 55,
+					rha: 8,
+					rk: 105,
+				}),
+				pose({ rp: -90 }, arms(0, 14, 0, 0), {
+					lhf: 42,
+					lha: 5,
+					lk: 0,
+					rhf: 55,
+					rha: 8,
+					rk: 105,
+				}),
+				1.2,
+				1,
+				1.5,
+				0.5,
+			),
+			contacts: ["torso", "feet"],
+			feet: "flat",
+		},
+	},
+	{
+		id: "hipabd",
+		name: "دور کردن پا، ایستاده",
+		pattern: "mobility",
+		kind: "rehab",
+		muscles: ["glutes"],
+		equip: "none",
+		level: 1,
+		avoid: [],
+		premium: false,
+		timed: true,
+		anim: rep(
+			pose(arms(0, 30, -70, 100), legs()),
+			pose(arms(0, 30, -70, 100), { lha: 32, rha: 5 }),
+			1,
+			0.6,
+			1.2,
+			0.4,
+		),
+	},
+	{
+		id: "minisquat",
+		name: "اسکات نیمه",
+		pattern: "mobility",
+		kind: "rehab",
+		muscles: ["quads", "glutes"],
+		equip: "none",
+		level: 1,
+		avoid: [],
+		premium: false,
+		timed: true,
+		anim: rep(
+			stand,
+			pose({ spine: 18 }, arms(70, 6, 0, 0), legs(45, 10, 50)),
+			1.5,
+			0.4,
+			1.2,
+			0.5,
+		),
+	},
+	{
+		id: "balance",
+		name: "تعادل تک‌پا",
+		pattern: "mobility",
+		kind: "rehab",
+		muscles: ["glutes", "core"],
+		equip: "none",
+		level: 1,
+		avoid: [],
+		premium: false,
+		timed: true,
+		anim: {
+			dur: 4,
+			frames: [
+				pose(arms(0, 35, 0, 10), {
+					lhf: 50,
+					lha: 5,
+					lk: 75,
+					rhf: 0,
+					rha: 3,
+					rk: 4,
+				}),
+				pose({ spine: 2 }, arms(0, 40, 0, 14), {
+					lhf: 54,
+					lha: 5,
+					lk: 78,
+					rhf: 0,
+					rha: 3,
+					rk: 6,
+				}),
+			],
+		},
+	},
+	{
+		id: "calfstretch",
+		name: "کشش ساق پا",
+		pattern: "mobility",
+		kind: "rehab",
+		muscles: ["hams"],
+		equip: "none",
+		level: 1,
+		avoid: [],
+		premium: false,
+		timed: true,
+		anim: {
+			dur: 5,
+			feet: "flat",
+			frames: [
+				pose({ spine: 8 }, arms(80, 6, 0, 10), {
+					lhf: 28,
+					lha: 4,
+					lk: 30,
+					rhf: -22,
+					rha: 4,
+					rk: 0,
+				}),
+				pose({ spine: 10 }, arms(80, 6, 0, 14), {
+					lhf: 31,
+					lha: 4,
+					lk: 34,
+					rhf: -23,
+					rha: 4,
+					rk: 0,
+				}),
+			],
+		},
+	},
+	{
+		id: "wriststretch",
+		name: "کشش ساعد و مچ",
+		pattern: "mobility",
+		kind: "rehab",
+		muscles: ["arms"],
+		equip: "none",
+		level: 1,
+		avoid: [],
+		premium: false,
+		timed: true,
+		anim: {
+			dur: 5,
+			frames: [
+				pose(legs(), {
+					lsf: 85,
+					lsa: 0,
+					le: 0,
+					rsf: 70,
+					rsa: -20,
+					rsr: -90,
+					re: 50,
+				}),
+				pose(legs(), {
+					lsf: 87,
+					lsa: 0,
+					le: 0,
+					rsf: 72,
+					rsa: -20,
+					rsr: -90,
+					re: 54,
+				}),
+			],
+		},
+	},
 ];
 
 // changing the language reloads the app, so the texts are picked once here
@@ -784,7 +1108,7 @@ const LOCALE_GUIDES = { fa: GUIDES, en: GUIDES_EN, tr: GUIDES_TR }[LOCALE];
 
 export const EXERCISES: Exercise[] = RAW.map((e) => ({
 	...e,
-	guide: LOCALE_GUIDES[e.id] ?? GUIDES[e.id],
+	guide: LOCALE_GUIDES[e.id] ?? REHAB_GUIDES[LOCALE][e.id] ?? GUIDES[e.id],
 	wrong: WRONG[e.id]?.map((w) => ({ ...w, label: wrongLabel(w.label, LOCALE) })),
 }));
 
@@ -819,6 +1143,17 @@ const NAME_MAP: Record<Locale, Record<string, string>> = {
 		quadstretch: "Quad stretch",
 		chestopen: "Chest opener",
 		childpose: "Child’s pose",
+		neckstretch: "Neck stretch",
+		wallangel: "Wall angel",
+		pendulum: "Shoulder pendulum",
+		shoulderrot: "Shoulder external rotation",
+		kneehug: "Knee to chest",
+		slr: "Straight leg raise",
+		hipabd: "Standing hip abduction",
+		minisquat: "Mini squat",
+		balance: "Single-leg balance",
+		calfstretch: "Calf stretch",
+		wriststretch: "Forearm and wrist stretch",
 	},
 	tr: {
 		squat: "Vücut ağırlığı squat",
@@ -849,6 +1184,17 @@ const NAME_MAP: Record<Locale, Record<string, string>> = {
 		quadstretch: "Quadriceps germe",
 		chestopen: "Göğüs açma",
 		childpose: "Çocuk pozu",
+		neckstretch: "Ense germe",
+		wallangel: "Duvar meleği",
+		pendulum: "Omuz sarkacı",
+		shoulderrot: "Omuz dış rotasyonu",
+		kneehug: "Diz göğse çekme",
+		slr: "Düz bacak kaldırma",
+		hipabd: "Ayakta kalça abdüksiyonu",
+		minisquat: "Mini squat",
+		balance: "Tek ayak denge",
+		calfstretch: "Baldır germe",
+		wriststretch: "Ön kol ve bilek germe",
 	},
 };
 

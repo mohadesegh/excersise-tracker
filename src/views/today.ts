@@ -19,6 +19,8 @@ import type { Session } from "../types";
 import { $, dayKey, fa } from "../utils";
 import { getLocale, setLocale, t, type Locale } from "../i18n";
 import { exerciseName } from "../data/exercises";
+import { regionName, routineFor, routineMinutes } from "../rehab";
+import { rehabDoneToday } from "./rehab";
 import {
 	bindLangSwitcher,
 	dose,
@@ -277,6 +279,57 @@ export const todayView: View = (root, _p, query) => {
 				? `Tekrarların otomatik ayarlanması, haftanın tüm günleri ve özel hareketler. ${fa(7)} gün ücretsiz dene.`
 				: `Auto-adjust reps, all-week scheduling, and premium moves. Try ${fa(7)} days free.`;
 
+	const pains = prof.pains ?? [];
+	const routine = routineFor(pains);
+	const sep = locale === "fa" ? "، " : ", ";
+	const rehabCard = pains.length
+		? {
+				title:
+					locale === "fa"
+						? "حرکات اصلاحی امروز"
+						: locale === "tr"
+							? "Bugünün düzeltici hareketleri"
+							: "Today's corrective moves",
+				text: `${pains.map((x) => regionName(x.region, locale)).join(sep)}. ${
+					locale === "fa"
+						? `${fa(routine.length)} حرکت، حدود ${fa(routineMinutes(routine))} دقیقه`
+						: locale === "tr"
+							? `${fa(routine.length)} hareket, yaklaşık ${fa(routineMinutes(routine))} dakika`
+							: `${fa(routine.length)} moves, about ${fa(routineMinutes(routine))} minutes`
+				}`,
+				go: rehabDoneToday()
+					? locale === "fa"
+						? "✓ انجام شد"
+						: locale === "tr"
+							? "✓ Yapıldı"
+							: "✓ Done"
+					: locale === "fa"
+						? "شروع"
+						: locale === "tr"
+							? "Başla"
+							: "Start",
+			}
+		: {
+				title:
+					locale === "fa"
+						? "جایی از بدنت درد دارد؟"
+						: locale === "tr"
+							? "Vücudunda ağrıyan bir yer var mı?"
+							: "Does something hurt?",
+				text:
+					locale === "fa"
+						? "روی بدن سه‌بعدی خودت نشان بده و حرکت اصلاحی بگیر."
+						: locale === "tr"
+							? "Kendi 3D vücudunun üzerinde göster, düzeltici hareketlerini al."
+							: "Show it on your own 3D body and get corrective moves.",
+				go:
+					locale === "fa"
+						? "نشان بده"
+						: locale === "tr"
+							? "Göster"
+							: "Show",
+			};
+
 	root.innerHTML = `
     <section class="today">
       ${langSwitcherHTML(locale)}
@@ -322,6 +375,11 @@ export const todayView: View = (root, _p, query) => {
         <ul class="ex-list">${items}</ul>
         <a class="btn btn-main" href="#/workout/${nextIdx}">${nextWorkoutText}</a>
       </article>
+
+      <a class="rcard ${pains.length ? "" : "quiet"}" href="#/rehab">
+        <div><b>${rehabCard.title}</b><span>${rehabCard.text}</span></div>
+        <span class="rcard-go">${rehabCard.go}</span>
+      </a>
 
       <h3 class="h3">${weekPlanText}</h3>
       <ul class="day-chips">${others}</ul>

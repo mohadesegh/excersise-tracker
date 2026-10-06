@@ -2696,3 +2696,295 @@ html[dir="ltr"] .wstats > div span {
 .ring b {
 	font-variant-numeric: tabular-nums;
 }
+
+/* body scan */
+.quiz-stage {
+	transition: height 0.3s ease;
+}
+.quiz-stage.tall {
+	height: min(44vh, 360px);
+}
+.scan-step {
+	position: absolute;
+	top: 12px;
+	inset-inline-start: 12px;
+	background: rgba(0, 0, 0, 0.55);
+	color: #fff;
+	border-radius: 14px;
+	padding: 6px 12px;
+	display: grid;
+	line-height: 1.4;
+}
+.scan-step b {
+	font-size: 0.75rem;
+	font-weight: 600;
+	opacity: 0.85;
+}
+.scan-step small {
+	font-size: 1rem;
+	font-weight: 800;
+}
+.scan-hold {
+	--p: 0;
+	position: absolute;
+	top: 12px;
+	inset-inline-end: 12px;
+	width: 60px;
+	height: 60px;
+	border-radius: 50%;
+	background: conic-gradient(
+		var(--ok) calc(var(--p) * 360deg),
+		rgba(255, 255, 255, 0.3) 0
+	);
+}
+.scan-hold i {
+	position: absolute;
+	inset: 7px;
+	border-radius: 50%;
+	background: rgba(0, 0, 0, 0.6);
+}
+.scan-done {
+	margin: 10px 0 0;
+	padding: 10px 14px;
+	border-radius: 14px;
+	background: color-mix(in srgb, var(--ok) 12%, var(--surface));
+	font-weight: 600;
+	line-height: 1.7;
+}
+.scan-stats {
+	grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+}
+.scan-stats b {
+	font-size: 1.25rem;
+}
+
+/* body map: where it hurts */
+.painmap {
+	display: grid;
+	gap: 10px;
+	margin-top: 10px;
+}
+.pm-views {
+	justify-content: center;
+}
+.pm-hint {
+	text-align: center;
+}
+.pm-list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: grid;
+	gap: 8px;
+}
+.pm-list:empty {
+	display: none;
+}
+.pm-list li {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	background: var(--surface);
+	box-shadow: var(--shadow-card);
+	border-radius: 16px;
+	padding: 4px 6px;
+}
+.pm-item {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	border: 0;
+	background: none;
+	padding: 8px 10px;
+	text-align: start;
+	cursor: pointer;
+	font: inherit;
+	color: inherit;
+}
+.pm-item span {
+	display: grid;
+	min-width: 0;
+}
+.pm-item small,
+.pain-cards small {
+	color: var(--ink-2);
+	font-size: 0.85rem;
+}
+/* the dot's halo grows with the pain level */
+.pm-item i,
+.pain-cards i {
+	--lv: 5;
+	flex: none;
+	width: 14px;
+	height: 14px;
+	margin: 8px;
+	border-radius: 50%;
+	background: var(--hot);
+	box-shadow: 0 0 0 calc(var(--lv) * 0.6px + 2px)
+		color-mix(in srgb, var(--hot) 22%, transparent);
+}
+.pm-all summary {
+	cursor: pointer;
+	color: var(--ink-2);
+	font-weight: 600;
+	padding: 6px 0;
+}
+.pm-regions,
+.pm-chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+.pm-regions {
+	padding-top: 8px;
+}
+.pm-backdrop {
+	position: fixed;
+	inset: 0;
+	z-index: 40;
+	background: rgba(8, 10, 16, 0.5);
+	display: flex;
+	align-items: flex-end;
+	justify-content: center;
+}
+.pm-sheet {
+	width: 100%;
+	max-width: 560px;
+	max-height: 88vh;
+	max-height: 88dvh;
+	overflow-y: auto;
+	background: var(--bg);
+	border-radius: 26px 26px 0 0;
+	padding: 20px 18px calc(18px + env(safe-area-inset-bottom, 0px));
+	box-shadow: var(--shadow-pop);
+	animation: enter 0.25s ease;
+}
+.pm-label {
+	margin: 16px 0 8px;
+	font-weight: 700;
+}
+.pm-level {
+	display: grid;
+	grid-template-columns: 1fr auto;
+	align-items: baseline;
+}
+.pm-level output {
+	font-size: 1.4rem;
+	font-weight: 800;
+}
+.pm-level output small {
+	font-size: 0.8rem;
+	font-weight: 600;
+	color: var(--ink-2);
+}
+.pm-level input {
+	grid-column: 1 / -1;
+	width: 100%;
+	height: 36px;
+	margin: 0;
+	accent-color: var(--hot);
+	cursor: pointer;
+}
+.pm-actions {
+	display: grid;
+	margin-top: 8px;
+}
+
+/* corrective moves */
+.rehab-stage {
+	height: min(44vh, 360px);
+	margin: 4px -18px 0;
+	position: relative;
+	background: radial-gradient(
+		120% 70% at 50% 100%,
+		color-mix(in srgb, var(--hot) 10%, var(--sunk)),
+		transparent 70%
+	);
+}
+.pain-cards {
+	list-style: none;
+	padding: 0;
+	margin: 14px 0 0;
+	display: grid;
+	gap: 10px;
+}
+.pain-cards li {
+	display: flex;
+	align-items: flex-start;
+	gap: 6px;
+	background: var(--surface);
+	box-shadow: var(--shadow-card);
+	border-radius: var(--r-card);
+	padding: 14px;
+}
+.pain-cards div {
+	display: grid;
+	gap: 2px;
+	min-width: 0;
+}
+.pain-cards p {
+	margin: 6px 0 0;
+	line-height: 1.8;
+	font-size: 0.93rem;
+}
+.rehab-done {
+	color: var(--ok);
+	font-size: 0.85rem;
+	font-weight: 700;
+	margin-inline-start: 8px;
+}
+.tier {
+	display: block;
+	font-size: 0.78rem;
+	font-weight: 600;
+}
+.tier-mob {
+	color: var(--ok);
+}
+.tier-strong {
+	color: var(--accent);
+}
+.tier-stretch {
+	color: var(--info);
+}
+.section-rehab {
+	color: var(--hot);
+}
+.rcard {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	margin-top: 14px;
+	padding: 14px 16px;
+	border-radius: var(--r-card);
+	background: var(--surface);
+	box-shadow:
+		var(--shadow-card),
+		inset 0 0 0 1.5px color-mix(in srgb, var(--hot) 45%, transparent);
+	text-decoration: none;
+}
+.rcard.quiet {
+	box-shadow: var(--shadow-card);
+}
+.rcard div {
+	display: grid;
+	gap: 2px;
+	min-width: 0;
+}
+.rcard div span {
+	color: var(--ink-2);
+	font-size: 0.9rem;
+	line-height: 1.6;
+}
+.rcard-go {
+	flex: none;
+	font-weight: 700;
+	color: var(--hot);
+	white-space: nowrap;
+}
+.rcard.quiet .rcard-go {
+	color: var(--accent);
+}

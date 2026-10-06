@@ -9,6 +9,7 @@ import { quizView } from './views/quiz';
 import { todayView, welcomeView } from './views/today';
 import { workoutView } from './views/workout';
 import { bodyView } from './views/body';
+import { rehabView } from './views/rehab';
 
 route('welcome', { view: welcomeView });
 route('quiz', { view: quizView });
@@ -17,6 +18,7 @@ route('workout', { view: workoutView, needsProfile: true });
 route('library', { view: libraryView, tab: 'library' });
 route('ex', { view: exerciseView });
 route('body', { view: bodyView, tab: 'progress', needsProfile: true });
+route('rehab', { view: rehabView, tab: 'today', needsProfile: true });
 route('progress', { view: progressView, tab: 'progress', needsProfile: true });
 route('profile', { view: profileView, tab: 'profile', needsProfile: true });
 route('pro', { view: proView });
