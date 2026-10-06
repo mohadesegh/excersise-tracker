@@ -36,6 +36,10 @@ TRIM = (
 )
 
 
+# MP3 audio under a neutral name: download managers grab every address ending in .mp3
+EXT = ".dat"
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--list", required=True, help="the bundled scripts/voice-list.ts")
@@ -48,8 +52,8 @@ def main() -> None:
         clips = json.loads(subprocess.run(["node", args.list], env=env, capture_output=True, check=True).stdout.decode("utf-8"))
         out = OUT / locale
         out.mkdir(parents=True, exist_ok=True)
-        wanted = {c["file"] + ".mp3" for c in clips}
-        for old in out.glob("*.mp3"):
+        wanted = {c["file"] + EXT for c in clips}
+        for old in out.glob("*" + EXT):
             if old.name not in wanted:
                 old.unlink()
 
@@ -58,17 +62,17 @@ def main() -> None:
         with tempfile.TemporaryDirectory() as tmp:
             wav = Path(tmp) / "clip.wav"
             for c in clips:
-                target = out / (c["file"] + ".mp3")
+                target = out / (c["file"] + EXT)
                 if target.exists() and not args.force:
                     continue
                 with wave.open(str(wav), "wb") as w:
                     voice.synthesize_wav(c["text"], w, syn_config=SynthesisConfig(length_scale=1.05))
                 subprocess.run(
-                    ["ffmpeg", "-y", "-loglevel", "error", "-i", str(wav), "-af", TRIM, "-ac", "1", "-ar", "22050", "-b:a", "32k", str(target)],
+                    ["ffmpeg", "-y", "-loglevel", "error", "-i", str(wav), "-af", TRIM, "-ac", "1", "-ar", "22050", "-b:a", "32k", "-f", "mp3", str(target)],
                     check=True,
                 )
                 made += 1
-        size = sum(f.stat().st_size for f in out.glob("*.mp3"))
+        size = sum(f.stat().st_size for f in out.glob("*" + EXT))
         print(f"{locale}: {len(clips)} clips ({made} new), {size / 1e6:.1f} MB", file=sys.stderr)
 
 

@@ -41,6 +41,11 @@ export interface PoseAnim {
    * The solver tilts the whole body until they do, so nothing floats or sinks.
    */
   contacts?: [Contact, Contact];
+  /**
+   * Lying on the back: the torso stays as posed, and every arm or leg that is
+   * close to the floor bends just enough to rest on it.
+   */
+  supine?: boolean;
   /** floor: palms flat on the floor; grip: fists around a weight; free (default): relaxed open hands. */
   hands?: 'free' | 'floor' | 'grip';
   /** flat: soles on the floor (default when upright or on the back); toes: on the toes (face-down). */
@@ -48,7 +53,8 @@ export interface PoseAnim {
 }
 
 export type Vec = [number, number, number];
-type Mat = [number, number, number, number, number, number, number, number, number];
+/** Row-major 3×3 rotation; its columns are where the part's own x (side), y (up) and z (front) axes point. */
+export type Mat = [number, number, number, number, number, number, number, number, number];
 
 export type SegName =
   | 'torso' | 'pelvis' | 'shoulders' | 'neck'
@@ -60,6 +66,14 @@ export interface Skeleton {
   head: Vec;
   hands: [Vec, Vec];
   slices: SolvedSlice[];
+  /** how each part is turned in the world (a limb hangs along its own -y); for a skinned body */
+  frames: Frames;
+}
+
+export interface Frames {
+  root: Mat; torso: Mat; head: Mat;
+  lua: Mat; lfa: Mat; rua: Mat; rfa: Mat;
+  lth: Mat; lsh: Mat; rth: Mat; rsh: Mat;
 }
 
 const D = Math.PI / 180;
@@ -129,6 +143,20 @@ export interface BodyShape {
   head: number;
   /** per-segment length multipliers on top of `scale` (from a body scan); 1 when absent */
   len?: Partial<Record<keyof typeof BASE_L, number>>;
+  /** what the skinned human body is shaped by, beyond the numbers above */
+  build?: Build;
+}
+
+export interface Build {
+  /** 0 = female, 1 = male */
+  male: number;
+  /** body fat and muscle, 0..1 with 0.5 = average */
+  fat: number;
+  muscle: number;
+  /** how much thicker each limb measured than a body of this build usually is; 1 when not measured */
+  limbs: { arm: number; forearm: number; thigh: number; shin: number };
+  /** half the measured distance between the shoulder joints (metres), when a scan gave one */
+  shoulderHalf?: number;
 }
 
 export const DEFAULT_SHAPE: BodyShape = {
@@ -208,6 +236,7 @@ interface Raw {
   ll: { hip: Vec; knee: Vec; ankle: Vec; toe: Vec; heel: Vec };
   rl: { hip: Vec; knee: Vec; ankle: Vec; toe: Vec; heel: Vec };
   slices: SolvedSlice[];
+  frames: Frames;
 }
 
 const norm3 = (v: Vec): Vec => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
@@ -222,7 +251,8 @@ function fk(p: Required<Pose>, shape: BodyShape, tilt: number, feet: 'flat' | 't
   const pelvis: Vec = [0, 0, 0];
   const shoulderMid = mv(torso, [0, L.torso, 0]);
   const neckTop = mv(torso, [0, L.torso + 0.08 * sc, 0]);
-  const head = add(neckTop, mv(mul(torso, rx(p.neck)), [0, shape.head + 0.02, 0.01]));
+  const headM = mul(torso, rx(p.neck));
+  const head = add(neckTop, mv(headM, [0, shape.head + 0.02, 0.01]));
 
   // direction the toes point when the foot is flat: the body's forward, or toward the feet when lying
   const fwd = mv(root, [0, 0, 1]);
@@ -233,8 +263,9 @@ function fk(p: Required<Pose>, shape: BodyShape, tilt: number, feet: 'flat' | 't
     const sh = mv(torso, [side * shape.shoulderHalf, L.torso - 0.02, 0]);
     const up = mul(torso, mul(rz(side * a), mul(rx(-f), ry(side * r))));
     const el = add(sh, mv(up, DOWN), L.ua);
-    const hand = add(el, mv(mul(up, rx(-e)), DOWN), L.fa);
-    return { sh, el, hand };
+    const fore = mul(up, rx(-e));
+    const hand = add(el, mv(fore, DOWN), L.fa);
+    return { sh, el, hand, up, fore };
   };
   const leg = (side: 1 | -1, f: number, a: number, k: number, kv: number) => {
     const hip = mv(root, [side * shape.hipHalf, 0, 0]);
@@ -253,8 +284,8 @@ function fk(p: Required<Pose>, shape: BodyShape, tilt: number, feet: 'flat' | 't
       const d = norm3([shinDir[0] * 0.5, -1, shinDir[2] * 0.5]);
       toe = add(ankle, d, L.ft);
       heel = add(ankle, [-d[0] * 0.3, 0.02, -d[2] * 0.3]);
-    } else if (Math.abs(shinDir[1]) > 0.35) {
-      // shin roughly vertical: sole flat on the floor, ankle above the arch
+    } else if (shinDir[1] < -0.35) {
+      // foot under the knee, shin roughly vertical: sole flat on the floor, ankle above the arch
       toe = add(add(ankle, flatDir, L.ft), [0, -0.05, 0]);
       heel = add(add(ankle, flatDir, -0.05), [0, -0.05, 0]);
     } else {
@@ -262,7 +293,7 @@ function fk(p: Required<Pose>, shape: BodyShape, tilt: number, feet: 'flat' | 't
       toe = add(ankle, mv(shinM, [0, 0, 1]), L.ft);
       heel = ankle;
     }
-    return { hip, knee, ankle, toe, heel };
+    return { hip, knee, ankle, toe, heel, th, shinM };
   };
 
   const la = arm(1, p.lsf, p.lsa + (shape.arm - 0.085) * 60, p.lsr, p.le);
@@ -275,7 +306,12 @@ function fk(p: Required<Pose>, shape: BodyShape, tilt: number, feet: 'flat' | 't
     const y = s.t * L.torso;
     return { t: s.t, c: mv(torso, [0, y, s.f]), a: mv(torso, [half, y, s.f]), b: mv(torso, [-half, y, s.f]), d: s.d };
   });
-  return { pelvis, shoulderMid, neckTop, head, la, ra, ll, rl, slices };
+  const frames: Frames = {
+    root, torso, head: headM,
+    lua: la.up, lfa: la.fore, rua: ra.up, rfa: ra.fore,
+    lth: ll.th, lsh: ll.shinM, rth: rl.th, rsh: rl.shinM,
+  };
+  return { pelvis, shoulderMid, neckTop, head, la, ra, ll, rl, slices, frames };
 }
 
 /** Lowest surface height of a body part. */
@@ -297,7 +333,47 @@ function lowest(r: Raw, c: Contact, shape: BodyShape): number {
 
 export interface SolveOpts {
   contacts?: [Contact, Contact];
+  supine?: boolean;
   feet?: 'flat' | 'toes' | 'point';
+}
+
+const smooth = (a: number, b: number, v: number) => { const t = Math.min(1, Math.max(0, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
+
+/**
+ * Lying down: rest the limbs on the floor the torso lies on. A foot or hand
+ * that is posed near the floor is brought onto it by one joint (the knee of a
+ * bent leg, the hip of a straight one, the shoulder of an arm). The pull fades
+ * out with height, so a limb that lifts off the floor does so without a jump.
+ */
+function settle(p: Required<Pose>, shape: BodyShape, feet: 'flat' | 'toes' | 'point'): Required<Pose> {
+  const q = { ...p };
+  const r0 = fk(q, shape, 0, feet);
+  const floor = Math.min(lowest(r0, 'hips', shape), lowest(r0, 'back', shape), r0.head[1] - shape.head);
+  const rest = (key: keyof Pose, lo: number, hi: number, share: number, height: (r: Raw) => number) => {
+    const from = q[key];
+    const at = (v: number) => { q[key] = v; return height(fk(q, shape, 0, feet)) - floor; };
+    const pull = share * (1 - smooth(0.12, 0.3, at(from)));
+    if (pull <= 0) { q[key] = from; return; }
+    let a = from + lo, b = from + hi, ha = at(a), hb = at(b);
+    let best = Math.abs(ha) < Math.abs(hb) ? a : b;
+    if (Math.sign(ha) !== Math.sign(hb)) {
+      for (let i = 0; i < 14; i++) {
+        const m = (a + b) / 2, hm = at(m);
+        if (Math.sign(hm) === Math.sign(ha)) { a = m; ha = hm; } else { b = m; hb = hm; }
+      }
+      best = (a + b) / 2;
+    }
+    q[key] = from + (best - from) * pull;
+  };
+  const sole = (l: Raw['ll']) => Math.min(l.toe[1] - 0.028, l.heel[1] - 0.036);
+  for (const s of ['l', 'r'] as const) {
+    const leg = (r: Raw) => sole(s === 'l' ? r.ll : r.rl);
+    const bent = smooth(15, 35, q[`${s}k`]);
+    rest(`${s}hf`, -25, 8, 1 - bent, leg);
+    rest(`${s}k`, -40, 40, bent, leg);
+    rest(`${s}sf`, -30, 10, 1, (r) => (s === 'l' ? r.la : r.ra).hand[1] - 0.03);
+  }
+  return q;
 }
 
 /**
@@ -307,6 +383,7 @@ export interface SolveOpts {
  */
 export function solve(p: Required<Pose>, shape: BodyShape = DEFAULT_SHAPE, opts: SolveOpts = {}): Skeleton {
   const feet = opts.feet ?? (p.rp > 40 ? 'toes' : 'flat');
+  if (opts.supine) p = settle(p, shape, feet);
   let tilt = 0;
   if (opts.contacts) {
     const [ca, cb] = opts.contacts;
@@ -345,5 +422,6 @@ export function solve(p: Required<Pose>, shape: BodyShape = DEFAULT_SHAPE, opts:
     head: g(r.head),
     hands: [g(la.hand), g(ra.hand)],
     slices: r.slices.map((s) => ({ ...s, a: g(s.a), b: g(s.b), c: g(s.c) })),
+    frames: r.frames,
   };
 }

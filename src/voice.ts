@@ -100,20 +100,51 @@ export function clipName(text: string): string {
   }
   return (h >>> 0).toString(16).padStart(8, '0');
 }
-const clipUrl = (text: string) => `/voice/${getLocale()}/${clipName(text)}.mp3`;
+// .dat, not .mp3: download managers (IDM and the like) grab every address that ends in a media extension
+const clipUrl = (text: string) => `/voice/${getLocale()}/${clipName(text)}.dat`;
 
 /** One element for every clip: phones only let an element that the user has started keep playing on its own. */
 let clipPlayer: HTMLAudioElement | null = null;
+/** An empty sound, played once inside the user's tap so the element may play on its own afterwards. */
+const SILENCE = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+
+/**
+ * Clips are loaded as data and played from memory, so no media address is
+ * ever requested for a download manager to catch.
+ */
+const clips = new Map<string, Promise<string | null>>();
+function clip(text: string): Promise<string | null> {
+  const url = clipUrl(text);
+  let got = clips.get(url);
+  if (!got) {
+    got = fetch(url)
+      .then((r) => (r.ok ? r.arrayBuffer() : null))
+      .then((b) => (b ? URL.createObjectURL(new Blob([b], { type: 'audio/mpeg' })) : null))
+      .catch(() => {
+        clips.delete(url); // offline for a moment: try again next time
+        return null;
+      });
+    clips.set(url, got);
+  }
+  return got;
+}
 
 async function playClips(parts: string[], mine: number): Promise<void> {
-  // warm the cache for the whole sentence so the pieces follow each other without gaps
-  for (const p of parts.slice(1)) void fetch(clipUrl(p)).catch(() => {});
-  const a = (clipPlayer ??= new Audio());
-  for (const part of parts) {
+  let a = clipPlayer;
+  if (!a) {
+    a = clipPlayer = new Audio();
+    a.src = SILENCE;
+    void a.play().catch(() => {});
+  }
+  // load the whole sentence at once so the pieces follow each other without gaps
+  const loaded = parts.map(clip);
+  for (const one of loaded) {
+    const src = await one;
     if (mine !== turn) return;
+    if (!src) continue; // a missing clip is skipped
     await new Promise<void>((done) => {
-      a.onended = a.onerror = a.onpause = () => done(); // a missing clip is skipped
-      a.src = clipUrl(part);
+      a.onended = a.onerror = a.onpause = () => done();
+      a.src = src;
       a.play().catch(() => done());
     });
   }

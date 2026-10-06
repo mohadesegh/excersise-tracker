@@ -237,16 +237,16 @@ export function shapeFor(b: BodyInput | null | undefined): BodyShape {
 	 */
 	const limb = (guess: number, cm: number | undefined, draw: number) =>
 		cm ? clamp(cm * k * draw, guess * 0.75, guess * 1.5) : guess;
-	const arm = limb(
-		0.085 * Math.sqrt(hs) * (1 + 0.3 * ff) + sx * 0.004,
-		sc?.armW,
-		0.92,
-	);
-	const thigh = limb(
-		0.13 * Math.sqrt(hs) * (1 + 0.3 * ff) + (sx < 0 ? 0.012 : 0),
-		sc?.thighW,
-		0.8,
-	);
+	const guess = {
+		arm: 0.085 * Math.sqrt(hs) * (1 + 0.3 * ff) + sx * 0.004,
+		forearm: 0.068 * Math.sqrt(hs) * (1 + 0.22 * ff),
+		thigh: 0.13 * Math.sqrt(hs) * (1 + 0.3 * ff) + (sx < 0 ? 0.012 : 0),
+		shin: 0.09 * Math.sqrt(hs) * (1 + 0.22 * ff),
+	};
+	const arm = limb(guess.arm, sc?.armW, 0.92);
+	const forearm = limb(guess.forearm, sc?.forearmW, 0.85);
+	const thigh = limb(guess.thigh, sc?.thighW, 0.8);
+	const shin = limb(guess.shin, sc?.calfW, 0.8);
 	const shoulderHalf = sc
 		? sc.shoulder / 200
 		: (0.19 + sx * 0.016) * hs + ff * 0.01;
@@ -274,12 +274,24 @@ export function shapeFor(b: BodyInput | null | undefined): BodyShape {
 			{ t: 0.97, w: shoulderHalf * 2 + arm * 0.5, d: chest.d * 0.75, f: 0.005 },
 		],
 		arm,
-		forearm: limb(0.068 * Math.sqrt(hs) * (1 + 0.22 * ff), sc?.forearmW, 0.85),
+		forearm,
 		thigh,
-		shin: limb(0.09 * Math.sqrt(hs) * (1 + 0.22 * ff), sc?.calfW, 0.8),
+		shin,
 		neck: 0.07 * (1 + 0.2 * ff) + sx * 0.006,
 		head: 0.1 * Math.pow(hs, 0.3),
 		len: sc ? scanLengths(sc, hs) : undefined,
+		build: {
+			male: (sx + 1) / 2,
+			fat: clamp(0.5 + ff * 0.5, 0.1, 1),
+			muscle: 0.5,
+			limbs: {
+				arm: arm / guess.arm,
+				forearm: forearm / guess.forearm,
+				thigh: thigh / guess.thigh,
+				shin: shin / guess.shin,
+			},
+			shoulderHalf: sc ? shoulderHalf : undefined,
+		},
 	};
 }
 

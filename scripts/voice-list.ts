@@ -1,6 +1,6 @@
 // Prints, as JSON, every piece of speech the app can play from recorded clips
 // in one language: [{ file, text }]. make-voice.py turns the list into
-// public/voice/<language>/<file>.mp3. The language comes from VOICE_LOCALE.
+// public/voice/<language>/<file>.dat (MP3 audio). The language comes from VOICE_LOCALE.
 import "./voice-env";
 import { EXERCISES, exerciseName } from "../src/data/exercises";
 import { CUES } from "../src/formcheck/analyzers";

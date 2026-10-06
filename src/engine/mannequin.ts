@@ -3,6 +3,7 @@ import type { Muscle, PainRegion } from '../types';
 import { regionSpots } from './regions';
 import { reducedMotion } from '../utils';
 import { glRenderer, rgb, type Cone, type Cylinder, type Ellipsoid, type Palette, type Scene, type Slab, type V3 } from './gl';
+import { humanBody, humanPending, loadHuman, type HumanColors } from './human';
 
 /** Which body parts light up for each muscle group. */
 const MUSCLE_SEGS: Record<Muscle, SegName[]> = {
@@ -26,8 +27,33 @@ function keyTime(a: PoseAnim): number {
 }
 
 /** Adaptive pixel budget for the GL renderer: drops on slow phones, recovers on fast ones. */
-let pixelBudget = 260_000;
+const MAX_PIXELS = 260_000;
+let pixelBudget = MAX_PIXELS;
 let frameAvg = 16;
+let smooth = 0;
+
+/**
+ * Steer the pixel budget by the time between animation frames. The GPU works
+ * after the draw call returns, so timing the call itself says nothing; a late
+ * next frame is what a slow phone actually shows.
+ */
+function tune(gap: number): void {
+  if (gap > 250) return; // a pause (tab switch, scroll), not a slow frame
+  frameAvg = frameAvg * 0.9 + gap * 0.1;
+  if (frameAvg > 22 && pixelBudget > 40_000) {
+    pixelBudget *= 0.75;
+    frameAvg = 17;
+    smooth = -240; // stay down for a while before trying more pixels again
+  } else if (frameAvg < 17.5 && pixelBudget < MAX_PIXELS && ++smooth > 90) {
+    pixelBudget = Math.min(MAX_PIXELS, pixelBudget * 1.1);
+    smooth = 0;
+  }
+}
+
+/** Drawing waits while the page scrolls, so the figure never costs the scroll its frames. */
+let scrollUntil = 0;
+document.addEventListener('scroll', () => { scrollUntil = performance.now() + 140; }, { capture: true, passive: true });
+
 
 /** Limb thickness comes from the body shape; the torso is drawn as a loft of slices. */
 const limbWidth = (name: SegName, s: BodyShape): number => {
@@ -117,7 +143,10 @@ export class Mannequin {
     this.mq.addEventListener('change', this.onTheme);
     document.addEventListener('visibilitychange', this.onVis);
     if (opts.interactive) this.bindDrag();
+    // the body arrives a moment after the first frame: frame and draw again with it
+    loadHuman(() => { if (!this.gone) { this.measure(); this.kick(); } });
   }
+  private gone = false;
 
   /** Change the body (e.g. from the user's height, weight and measurements). */
   setBody(shape: BodyShape): void {
@@ -183,6 +212,7 @@ export class Mannequin {
   }
 
   destroy(): void {
+    this.gone = true;
     cancelAnimationFrame(this.raf);
     this.io.disconnect();
     this.ro.disconnect();
@@ -190,14 +220,17 @@ export class Mannequin {
     document.removeEventListener('visibilitychange', this.onVis);
   }
 
-  private onTheme = () => { this.colors = readColors(this.canvas); this.pal = null; this.draw(); };
+  private onTheme = () => { this.colors = readColors(this.canvas); this.pal = null; this.humanPal = null; this.floorKey = ''; this.draw(); };
   private onVis = () => { if (!document.hidden) this.kick(); };
 
   private resize(): void {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const r = this.canvas.getBoundingClientRect();
-    this.canvas.width = Math.max(1, Math.round(r.width * dpr));
-    this.canvas.height = Math.max(1, Math.round(r.height * dpr));
+    const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
+    // same size as before: nothing to redraw
+    if (w === this.canvas.width && h === this.canvas.height) return;
+    this.canvas.width = w;
+    this.canvas.height = h;
     this.draw();
   }
 
@@ -288,12 +321,20 @@ export class Mannequin {
     this.last = performance.now();
     const step = (now: number) => {
       this.raf = 0;
-      const dt = Math.min(0.05, (now - this.last) / 1000);
-      this.last = now;
       const still = reducedMotion() || !!this.opts.still;
+      // not now: the page is scrolling
+      if (!this.dragging && now < scrollUntil) {
+        this.last = now;
+        this.raf = requestAnimationFrame(step);
+        return;
+      }
+      const gap = now - this.last;
+      const dt = Math.min(0.05, gap / 1000);
+      this.last = now;
       if (!still) this.time += dt * this.speed;
       const spin = this.opts.spin ?? 0;
       if (spin && !this.touched && !still) this.yaw += spin * dt;
+      if (!still && !humanBody()) tune(gap);
       this.draw();
       if (!still && this.visible && !document.hidden) this.raf = requestAnimationFrame(step);
     };
@@ -428,20 +469,7 @@ export class Mannequin {
       cones.push(cone(ankle, addv(heel, dir, 0.04), 0.036, 0.03, 0));
     }
 
-    const props: Cylinder[] = [];
-    if (this.anim?.prop === 'dumbbell') {
-      for (const h of sk.hands) {
-        props.push({ a: addv(h, side, -0.075), b: addv(h, side, 0.075), r: 0.016 });
-        props.push({ a: addv(h, side, -0.115), b: addv(h, side, -0.065), r: 0.05 });
-        props.push({ a: addv(h, side, 0.065), b: addv(h, side, 0.115), r: 0.05 });
-      }
-    } else if (this.anim?.prop === 'barbell') {
-      const [l, r] = sk.hands;
-      const dir = norm(sub(l, r));
-      props.push({ a: addv(r, dir, -0.55), b: addv(l, dir, 0.55), r: 0.014 });
-      props.push({ a: addv(r, dir, -0.5), b: addv(r, dir, -0.42), r: 0.2 });
-      props.push({ a: addv(l, dir, 0.42), b: addv(l, dir, 0.5), r: 0.2 });
-    }
+    const props = this.props(sk, side);
 
     // bounding sphere for the ray march
     const pts: Vec[] = [sk.head, ...Object.values(sk.seg).flat(), ...sk.slices.map((x) => x.c)];
@@ -453,6 +481,92 @@ export class Mannequin {
     for (const p of pts) r = Math.max(r, Math.hypot(p[0] - c[0], p[1] - c[1], p[2] - c[2]));
 
     return { cones, ellipsoids, basis: [side, up, fwd], props, slabs, bound: { c, r: r + 0.25 }, floorR };
+  }
+
+  /** The weights in the hands, as cylinders. `side` is the body's left. */
+  private props(sk: ReturnType<typeof solve>, side: Vec): Cylinder[] {
+    const addv = (a: Vec, b: Vec, k = 1): V3 => [a[0] + b[0] * k, a[1] + b[1] * k, a[2] + b[2] * k];
+    const props: Cylinder[] = [];
+    if (this.anim?.prop === 'dumbbell') {
+      for (const h of sk.hands) {
+        props.push({ a: addv(h, side, -0.075), b: addv(h, side, 0.075), r: 0.016 });
+        props.push({ a: addv(h, side, -0.115), b: addv(h, side, -0.065), r: 0.05 });
+        props.push({ a: addv(h, side, 0.065), b: addv(h, side, 0.115), r: 0.05 });
+      }
+    } else if (this.anim?.prop === 'barbell') {
+      const [l, r] = sk.hands;
+      const d: Vec = [l[0] - r[0], l[1] - r[1], l[2] - r[2]];
+      const n = Math.hypot(d[0], d[1], d[2]) || 1;
+      const dir: Vec = [d[0] / n, d[1] / n, d[2] / n];
+      props.push({ a: addv(r, dir, -0.55), b: addv(l, dir, 0.55), r: 0.014 });
+      props.push({ a: addv(r, dir, -0.5), b: addv(r, dir, -0.42), r: 0.2 });
+      props.push({ a: addv(l, dir, 0.42), b: addv(l, dir, 0.5), r: 0.2 });
+    }
+    return props;
+  }
+
+  private humanPal: HumanColors | null = null;
+  private humanColors(): HumanColors {
+    if (this.humanPal) return this.humanPal;
+    const cs = getComputedStyle(this.canvas);
+    const v = (n: string, fb: string) => cs.getPropertyValue(n).trim() || fb;
+    const pal = this.palette();
+    this.humanPal = {
+      skin: rgb(v('--hm-skin', '#d9a888'), [0.85, 0.66, 0.53]),
+      top: rgb(v('--hm-top', '#e8ecf1'), [0.91, 0.93, 0.95]),
+      topFemale: rgb(v('--hm-top-f', '#7fc8c2'), [0.5, 0.78, 0.76]),
+      bottom: rgb(v('--hm-bottom', '#27313f'), [0.15, 0.19, 0.25]),
+      hair: rgb(v('--hm-hair', '#2a211d'), [0.16, 0.13, 0.11]),
+      hot: pal.hot,
+      iron: pal.iron,
+      shadow: pal.dark ? 0.4 : 0.16,
+    };
+    return this.humanPal;
+  }
+
+  private floorKey = '';
+  /** The mat under the figure: a grid that fades out toward its rim. Redrawn only when the view changes. */
+  private floor(proj: (v: Vec) => [number, number, number, number], R: number, scale: number): void {
+    const { ctx, canvas } = this;
+    const W = canvas.width, H = canvas.height;
+    const key = [W, H, R, scale, this.yaw, this.pitch].map((n) => n.toFixed(3)).join();
+    if (key !== this.floorKey || this.floorLayer.width !== W || this.floorLayer.height !== H) {
+      this.floorKey = key;
+      const f = this.layer(this.floorLayer);
+      f.beginPath();
+      for (let i = 0; i <= 48; i++) {
+        const t = (i / 48) * Math.PI * 2;
+        const q = proj([Math.cos(t) * R, 0, Math.sin(t) * R]);
+        if (i) f.lineTo(q[0], q[1]); else f.moveTo(q[0], q[1]);
+      }
+      f.closePath();
+      f.fillStyle = this.colors.floor;
+      f.fill();
+      f.save();
+      f.clip();
+      f.strokeStyle = this.colors.grid;
+      f.lineWidth = Math.max(1, scale * 0.005);
+      f.beginPath();
+      for (let g = -R; g <= R + 1e-6; g += 0.25) {
+        let a = proj([g, 0, -R]), b = proj([g, 0, R]);
+        f.moveTo(a[0], a[1]); f.lineTo(b[0], b[1]);
+        a = proj([-R, 0, g]); b = proj([R, 0, g]);
+        f.moveTo(a[0], a[1]); f.lineTo(b[0], b[1]);
+      }
+      f.stroke();
+      f.restore();
+      // fade: keep the centre, dissolve the rim
+      const c0 = proj([0, 0, 0]);
+      const rad = Math.max(Math.abs(proj([R, 0, 0])[0] - c0[0]), Math.abs(proj([0, 0, R])[0] - c0[0]), scale * 0.6);
+      const fade = f.createRadialGradient(c0[0], c0[1], rad * 0.15, c0[0], c0[1], rad);
+      fade.addColorStop(0, 'rgba(0,0,0,1)');
+      fade.addColorStop(1, 'rgba(0,0,0,0)');
+      f.globalCompositeOperation = 'destination-in';
+      f.fillStyle = fade;
+      f.fillRect(0, 0, W, H);
+      f.globalCompositeOperation = 'source-over';
+    }
+    ctx.drawImage(this.floorLayer, 0, 0);
   }
 
   private layer(c: HTMLCanvasElement): CanvasRenderingContext2D {
@@ -471,7 +585,10 @@ export class Mannequin {
     ctx.clearRect(0, 0, W, H);
     if (!this.anim) return;
 
-    const sk = solve(sample(this.anim, this.time), this.shape, this.anim);
+    // the human body, once loaded, brings its own joint widths; poses are solved for those
+    const human = humanBody();
+    const fit = human?.fit(this.shape);
+    const sk = solve(sample(this.anim, this.time), fit ? fit.shape : this.shape, this.anim);
     const cy = Math.cos(this.yaw), sy = Math.sin(this.yaw);
     const cp = Math.cos(this.pitch), sp = Math.sin(this.pitch);
     const CAM = 4.5;
@@ -507,65 +624,40 @@ export class Mannequin {
     };
     const R = Math.max(0.8, fr + 0.25);
 
-    // real 3D path: shared WebGL raymarcher, rendered at a capped pixel count
-    const gl = glRenderer();
+    const rot = [cy, 0, sy, sy * sp, cp, -cy * sp, -sy * cp, sp, cy * cp];
+    if (human && fit) {
+      // plain triangles: cheap enough to draw at the canvas's own size
+      const q = Math.min(1, Math.sqrt(1_200_000 / (W * H)));
+      const w = Math.max(1, Math.round(W * q)), h = Math.max(1, Math.round(H * q));
+      const t = sk.frames.torso;
+      // a weight sits in the palm, a little past the wrist the skeleton ends at
+      const palm = (wrist: Vec, m: number[]): Vec => [wrist[0] - m[1] * 0.07, wrist[1] - m[4] * 0.07, wrist[2] - m[7] * 0.07];
+      const held = { ...sk, hands: [palm(sk.hands[0], sk.frames.lfa), palm(sk.hands[1], sk.frames.rfa)] as [Vec, Vec] };
+      const img = human.render(w, h, fit, sk, { rot, cam: CAM, ox: ox * q, oy: oy * q, scale: scale * q },
+        this.humanColors(), (n) => this.showMuscles && this.hl.has(n), this.props(held, [t[0], t[3], t[6]]));
+      this.floor(proj, R, scale);
+      ctx.drawImage(img, 0, 0, w, h, 0, 0, W, H);
+      this.drawSpots(sk, proj, scale);
+      return;
+    }
+
+    // the body failed to load: the shared WebGL raymarcher, rendered at a capped pixel count.
+    // While it is still loading, the flat figure below stands in.
+    const gl = humanPending() ? null : glRenderer();
     if (gl) {
       const q = Math.min(1, Math.sqrt(pixelBudget / (W * H)));
-      const t0 = performance.now();
       const w = Math.max(1, Math.round(W * q)), h = Math.max(1, Math.round(H * q));
-      const rot = [cy, 0, sy, sy * sp, cp, -cy * sp, -sy * cp, sp, cy * cp];
       const img = gl.render(w, h, this.scene(sk, R), { rot, cam: CAM, ox: ox * q, oy: oy * q, scale: scale * q }, this.palette());
       ctx.imageSmoothingQuality = 'high';
       ctx.drawImage(img, 0, 0, w, h, 0, 0, W, H);
       this.drawSpots(sk, proj, scale);
-      if (!this.opts.still) {
-        frameAvg = frameAvg * 0.9 + (performance.now() - t0) * 0.1;
-        if (frameAvg > 26 && pixelBudget > 50_000) { pixelBudget *= 0.8; frameAvg = 16; }
-        else if (frameAvg < 8 && pixelBudget < 260_000) pixelBudget = Math.min(260_000, pixelBudget * 1.1);
-      }
       return;
     }
 
     const segs = Object.keys(sk.seg) as SegName[];
 
-    /* 1. floor: a mat with a grid that fades out toward the edges */
-    const f = this.layer(this.floorLayer);
-    const ring = (r: number) => {
-      f.beginPath();
-      for (let i = 0; i <= 48; i++) {
-        const t = (i / 48) * Math.PI * 2;
-        const q = proj([Math.cos(t) * r, 0, Math.sin(t) * r]);
-        if (i) f.lineTo(q[0], q[1]); else f.moveTo(q[0], q[1]);
-      }
-      f.closePath();
-    };
-    ring(R);
-    f.fillStyle = this.colors.floor;
-    f.fill();
-    f.save();
-    f.clip();
-    f.strokeStyle = this.colors.grid;
-    f.lineWidth = Math.max(1, scale * 0.005);
-    f.beginPath();
-    for (let g = -R; g <= R + 1e-6; g += 0.25) {
-      let a = proj([g, 0, -R]), b = proj([g, 0, R]);
-      f.moveTo(a[0], a[1]); f.lineTo(b[0], b[1]);
-      a = proj([-R, 0, g]); b = proj([R, 0, g]);
-      f.moveTo(a[0], a[1]); f.lineTo(b[0], b[1]);
-    }
-    f.stroke();
-    f.restore();
-    // fade: keep the centre, dissolve the rim
-    const c0 = proj([0, 0, 0]);
-    const rad = Math.max(Math.abs(proj([R, 0, 0])[0] - c0[0]), Math.abs(proj([0, 0, R])[0] - c0[0]), scale * 0.6);
-    const fade = f.createRadialGradient(c0[0], c0[1], rad * 0.15, c0[0], c0[1], rad);
-    fade.addColorStop(0, 'rgba(0,0,0,1)');
-    fade.addColorStop(1, 'rgba(0,0,0,0)');
-    f.globalCompositeOperation = 'destination-in';
-    f.fillStyle = fade;
-    f.fillRect(0, 0, W, H);
-    f.globalCompositeOperation = 'source-over';
-    ctx.drawImage(this.floorLayer, 0, 0);
+    /* 1. floor */
+    this.floor(proj, R, scale);
 
     /* 2. body shadow: every limb projected onto the floor, light from above-front */
     const sh = this.layer(this.shadowLayer);
