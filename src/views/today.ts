@@ -43,10 +43,10 @@ export const welcomeView: View = (root) => {
       <div class="welcome-stage"><canvas aria-label="${locale === "fa" ? "آدمک در حال اسکات؛ برای چرخاندن بکشید" : locale === "tr" ? "Squat yapan manken; döndürmek için sürükle" : "Mannequin doing a squat; drag to rotate"}"></canvas></div>
       <div class="welcome-copy">
         <p class="brand">${brandName}</p>
-        <h1 class="hero-title">${locale === "fa" ? "برنامه‌ی تمرینیِ مخصوص خودت، در کمتر از یک دقیقه." : locale === "tr" ? "Kişiselleştirilmiş antrenman planın bir dakikadan kısa sürede." : "Your personalized workout plan in under a minute."}</h1>
-        <p class="lead">${locale === "fa" ? "هفت سؤال کوتاه جواب بده؛ برنامه‌ای می‌گیری که با بدن، وقت و وسایلت جور است. هر حرکت را سه‌بعدی و از هر زاویه ببین." : locale === "tr" ? "Yedi kısa soruya cevap ver; vücuduna, zamanına ve ekipmanına uyan bir program al. Her hareketi 3D ve her açıdan gör." : "Answer seven short questions and get a program designed for your body, time, and gear. See every move in 3D from every angle."}</p>
+        <h1 class="hero-title">${t("welcomeTitle", locale)}</h1>
+        <p class="lead">${t("welcomeLead", locale)}</p>
         <a class="btn btn-main" href="#/quiz">${t("start", locale)}</a>
-        <p class="fineprint">${locale === "fa" ? "رایگان، بدون ثبت‌نام" : locale === "tr" ? "Ücretsiz, kayıt gerekmez" : "Free, no sign-up required"}</p>
+        <p class="fineprint">${t("freeNote", locale)}</p>
       </div>
     </section>`;
 
@@ -195,9 +195,13 @@ export const todayView: View = (root, _p, query) => {
 				it.reps + (pro && !isLoaded(ex) ? (state.adjust[ex.id] ?? 0) : 0),
 			);
 			const kg = isLoaded(ex) ? todayKg(ex, prof, wk) : 0;
+			const of = it.insteadOf && exerciseName(it.insteadOf, locale);
+			const swapped = of
+				? `<small class="ex-row-swap">${locale === "fa" ? `به‌جای ${of}، به‌خاطر درد` : locale === "tr" ? `Ağrın için ${of} yerine` : `In place of ${of}, for your pain`}</small>`
+				: "";
 			return `<li><a class="ex-row" href="#/ex/${ex.id}">
         <canvas class="thumb" data-thumb="${ex.id}" aria-hidden="true"></canvas>
-        <span class="ex-row-name">${exerciseName(ex.id, locale)}</span>
+        <span class="ex-row-name">${exerciseName(ex.id, locale)}${swapped}</span>
         <span class="ex-row-dose">${dose(reps, it.timed, setsThisWeek(it.sets, wk))}${kg ? `<small>${kgText(kg, locale)}</small>` : ""}</span></a></li>`;
 		})
 		.join("");

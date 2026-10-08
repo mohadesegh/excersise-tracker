@@ -1,5 +1,6 @@
 import { extraRest, lowImpact, noBarbell } from './body';
 import { EX, EXERCISES } from './data/exercises';
+import { swapFor } from './data/injury';
 import { getLocale, type Locale } from './i18n';
 import type { DayPlan, Equip, Exercise, Pattern, PlannedExercise, Plan, Profile } from './types';
 
@@ -45,14 +46,30 @@ const EQUIP_FOR_PLACE: Record<Profile['place'], Equip[]> = {
 
 const ITEMS_FOR_MINUTES: Record<number, number> = { 20: 4, 35: 5, 50: 7 };
 
-export function usable(e: Exercise, p: Profile): boolean {
+const sore = (e: Exercise, p: Profile): boolean => e.avoid.some((l) => p.limits.includes(l));
+
+/** Right for the user's equipment, level and body, leaving sore areas aside. */
+function fits(e: Exercise, p: Profile): boolean {
   return (
     EQUIP_FOR_PLACE[p.place].includes(e.equip) &&
     e.level <= p.level &&
-    !e.avoid.some((l) => p.limits.includes(l)) &&
     !(e.impact && lowImpact(p)) &&
     !(e.equip === 'barbell' && noBarbell(p))
   );
+}
+
+export function usable(e: Exercise, p: Profile): boolean {
+  return fits(e, p) && !sore(e, p);
+}
+
+/** When every move of a pattern loads a sore area: the gentler stand-in for one of them. */
+function standIn(pattern: Pattern, p: Profile, taken: Set<string>): { ex: Exercise; of: string } | null {
+  for (const e of EXERCISES) {
+    if (e.pattern !== pattern || !fits(e, p) || !sore(e, p)) continue;
+    const alt = swapFor(e.id, p.limits);
+    if (alt && usable(EX[alt], p) && !taken.has(alt)) return { ex: EX[alt], of: e.id };
+  }
+  return null;
 }
 
 /** Candidates for a pattern, best fit first: prefer loaded moves when equipment exists. */
@@ -100,7 +117,15 @@ export function buildPlan(p: Profile, cycle = 0): Plan {
     for (const pattern of slots) {
       if (items.length >= count) break;
       let all = candidates(pattern, p, false).filter((e) => !today.has(e.id));
-      if (!all.length) continue;
+      if (!all.length) {
+        // an injury never empties a slot: the move's gentler stand-in is trained instead
+        const sub = standIn(pattern, p, today);
+        if (sub) {
+          today.add(sub.ex.id);
+          items.push({ id: sub.ex.id, insteadOf: sub.of, ...dose(sub.ex, p) });
+        }
+        continue;
+      }
       // each new training block rotates which variation leads, so the body gets a fresh stimulus
       const r = cycle % all.length;
       all = [...all.slice(r), ...all.slice(0, r)];

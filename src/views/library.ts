@@ -6,6 +6,7 @@ import {
 	exerciseName,
 	MUSCLE_NAME,
 } from "../data/exercises";
+import { injurySwaps, soreArea, sorePain, swapFor } from "../data/injury";
 import { getLocale, localeTag } from "../i18n";
 import { sessionKcal } from "../body";
 import { isPremium, state, update } from "../store";
@@ -68,7 +69,15 @@ const libraryText = {
 		compareTitle: "درست یا غلط؟ اشتباه‌های رایج را کنار اجرای درست ببین",
 		compareAria: "مقایسه‌ی اجرای درست و غلط",
 		correctBtn: "اجرای درست",
-		alternatives: "جایگزین‌ها",
+		alternatives: "حرکت‌های مشابه",
+		hurtTitle: "اگر جایی درد دارد، این را به‌جایش انجام بده",
+		hurtNote:
+			"راهنمایی عمومی است، نه تشخیص. اگر درد تیزتر شد دست نگه دار و با پزشک یا فیزیوتراپ مشورت کن.",
+		forYou: "برای تو",
+		notAdvised: "با درد ${a} توصیه نمی‌شود.",
+		ifBothers: "اگر به ${a} فشار آورد، حرکت ملایم‌ترش را انجام بده.",
+		doInstead: "به‌جایش: ${n}",
+		hasSwap: "جایگزین دارد",
 		timed: "این حرکت زمان‌دار است؛ در برنامه به ثانیه اجرا می‌شود.",
 		sets: "تعداد ست و تکرار در برنامه بر اساس هدف و سطحت تعیین می‌شود.",
 		results: "حرکت‌ها",
@@ -108,7 +117,15 @@ const libraryText = {
 			"Right or wrong? Compare the common mistakes against the correct form",
 		compareAria: "Compare correct and incorrect form",
 		correctBtn: "Correct form",
-		alternatives: "Alternatives",
+		alternatives: "Similar moves",
+		hurtTitle: "If something hurts, do this instead",
+		hurtNote:
+			"General guidance, not a diagnosis. Stop if the pain gets sharper, and see a doctor or physiotherapist.",
+		forYou: "For you",
+		notAdvised: "Not advised with ${a} pain.",
+		ifBothers: "If this bothers your ${a}, do the gentler move.",
+		doInstead: "Do instead: ${n}",
+		hasSwap: "Has a swap",
 		timed: "This movement is timed; it runs by the second in your plan.",
 		sets: "Set and rep targets are based on your goal and level.",
 		results: "Moves",
@@ -149,7 +166,15 @@ const libraryText = {
 			"Doğru mu yanlış mı? Yaygın hataları doğru form ile karşılaştır",
 		compareAria: "Doğru ve yanlış form karşılaştırması",
 		correctBtn: "Doğru form",
-		alternatives: "Alternatifler",
+		alternatives: "Benzer hareketler",
+		hurtTitle: "Bir yerin ağrıyorsa bunun yerine şunu yap",
+		hurtNote:
+			"Genel bir rehberdir, teşhis değildir. Ağrı keskinleşirse dur ve bir doktora ya da fizyoterapiste danış.",
+		forYou: "Senin için",
+		notAdvised: "Şu bölgede ağrın varken önerilmez: ${a}.",
+		ifBothers: "Bu hareket ${a} bölgesinde ağrı yaparsa daha yumuşak olanı yap.",
+		doInstead: "Bunun yerine: ${n}",
+		hasSwap: "Alternatifi var",
 		timed: "Bu hareket zamanlıdır; programda saniye cinsinden çalışır.",
 		sets: "Set ve tekrar hedefleri hedefine ve seviyene göre belirlenir.",
 		results: "Hareketler",
@@ -220,6 +245,7 @@ export const libraryView: View = (root) => {
 	let q = "";
 	let cleanup: Cleanup = () => {};
 	const pro = isPremium();
+	const limits = state.profile?.limits ?? [];
 
 	root.innerHTML = `
     <section class="library">
@@ -263,6 +289,7 @@ export const libraryView: View = (root) => {
 								.map((m) => MUSCLE_NAME[m])
 								.join(locale === "fa" ? "، " : ", ")}</span>
               ${e.premium && !pro ? proBadge(getLocale()) : ""}
+              ${e.avoid.some((l) => limits.includes(l)) ? `<span class="tile-swap">${text.hasSwap}</span>` : ""}
             </a></li>`,
 					)
 					.join("")
@@ -296,6 +323,39 @@ export const exerciseView: View = (root, params) => {
 	}
 	const locked = ex.premium && !isPremium();
 	const alts = alternatives(ex.id);
+
+	// what to do instead with a sore area; the user's own sore areas come first and are marked
+	const limits = state.profile?.limits ?? [];
+	const swaps = injurySwaps(ex.id).sort(
+		(a, b) =>
+			Number(limits.includes(b.limit)) - Number(limits.includes(a.limit)),
+	);
+	// a move the plan leaves out for this user is said plainly; the rest is only a suggestion
+	const hard = ex.avoid.find((l) => limits.includes(l));
+	const mine = hard ?? swaps.find((s) => limits.includes(s.limit))?.limit;
+	const mineAlt = mine && swapFor(ex.id, limits);
+	const swapNote =
+		mine && mineAlt
+			? `<a class="swap-note ${hard ? "hard" : ""}" href="#/ex/${mineAlt}" role="note">
+          <span>${(hard ? text.notAdvised : text.ifBothers).replace("${a}", soreArea(mine, locale))}</span>
+          <b>${text.doInstead.replace("${n}", exerciseName(mineAlt, locale))}</b>
+        </a>`
+			: "";
+	const swapsHTML = swaps.length
+		? `<section class="swaps-box">
+        <h2 class="h3">${text.hurtTitle}</h2>
+        <ul class="swaps">${swaps
+					.map(
+						(s) => `<li><a class="swap ${limits.includes(s.limit) ? "mine" : ""}" href="#/ex/${s.alt}">
+              <canvas class="thumb" data-thumb="${s.alt}" aria-hidden="true"></canvas>
+              <span class="swap-text"><small>${sorePain(s.limit, locale)}</small><b>${exerciseName(s.alt, locale)}</b></span>
+              ${limits.includes(s.limit) ? `<span class="swap-tag">${text.forYou}</span>` : ""}
+            </a></li>`,
+					)
+					.join("")}</ul>
+        <p class="fineprint">${text.hurtNote}</p>
+      </section>`
+		: "";
 
 	// logging the move on its own, outside a plan session: sets, reps (or seconds) and the weight used
 	const prof = state.profile;
@@ -332,6 +392,7 @@ export const exerciseView: View = (root, params) => {
         <button class="icon-btn" data-act="back" aria-label="${locale === "fa" ? "بازگشت" : locale === "tr" ? "Geri" : "Back"}">${backIcon}</button>
         <h1 class="h2">${exerciseName(ex.id, locale)}</h1>
       </header>
+      ${swapNote}
       <div class="stage ${locked ? "is-locked" : ""}">
         <div class="pane pane-ok">
           <canvas aria-label="${text.sideView} ${exerciseName(ex.id, locale)}"></canvas>
@@ -373,6 +434,7 @@ export const exerciseView: View = (root, params) => {
         ${ex.muscles.map((m) => `<span class="m">${MUSCLE_NAME[m]}</span>`).join("")}
       </div>
       <p class="why">${ex.guide.why}</p>
+      ${swapsHTML}
       ${canLog ? logHTML() : ""}
       <div class="history-slot">${locked ? "" : historyHTML(ex)}</div>
       ${locked ? "" : guideHTML(ex)}
@@ -400,9 +462,8 @@ export const exerciseView: View = (root, params) => {
 			onView: (y, p) => mq2?.setView(y, p),
 		},
 	);
-	const thumbs = mountThumbs(
-		$(".alts", root) ?? root.ownerDocument.createElement("div"),
-	);
+	// the stand-ins and the similar moves; the stage canvases have no data-thumb
+	const thumbs = mountThumbs(root);
 
 	root.addEventListener("click", (e) => {
 		const t = (e.target as Element).closest<HTMLElement>(

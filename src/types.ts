@@ -116,6 +116,8 @@ export interface PlannedExercise {
   id: string;
   /** Free substitute shown to non-premium users when `id` is a premium move. */
   freeAlt?: string;
+  /** The move this one stands in for, when every move of that kind loads a sore area. */
+  insteadOf?: string;
   sets: number;
   reps: number;
   timed: boolean;

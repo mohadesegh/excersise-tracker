@@ -160,7 +160,10 @@ function neighbours(d: Data): { start: Uint32Array; list: Uint16Array } {
 }
 
 /** How far the bust is filled out between MakeHuman's average (0) and largest (1) cup. */
-const BUST = 0.35;
+const BUST = 0;
+
+/** How far a training top draws the chest back to the round of the ribs (0 = not at all, 1 = flat). */
+const HOLD = 0.7;
 
 /** How round the skin of the armpit stays under a lifted arm (0 = pulled flat, 1 = as round as the shoulder's top). */
 const ARMPIT = 0.2;
@@ -413,15 +416,15 @@ function fitBody(d: Data, shape: BodyShape): Fit {
     if (cloth[v * 3] > 0.01 || cloth[v * 3 + 1] > 0.01) dressed.push(v);
     if (cloth[v * 3 + 1] > 0.05 && cloth[v * 3] <= 0) shirt.push(v);
   }
-  // a shirt lies over the chest as one smooth curve: the small tip of each side is
-  // ironed flat into the round of the cloth around it
-  for (const side of [1, -1]) {
-    const front = shirt.filter((v) => pos[v * 3] * side > 0.02 && pos[v * 3 + 2] > hipMid[2]
-      && pos[v * 3 + 1] > hipMid[1] + 0.5 * torsoH && pos[v * 3 + 1] < hipMid[1] + 0.9 * torsoH);
-    if (!front.length) continue;
-    const tip = front.reduce((a, v) => (pos[v * 3 + 2] > pos[a * 3 + 2] ? v : a));
-    const far = (v: number) => Math.hypot(pos[v * 3] - pos[tip * 3], pos[v * 3 + 1] - pos[tip * 3 + 1]);
-    iron(front.filter((v) => far(v) < 0.03), 60, [0, 1, 2]);
+  // a training top holds the chest close. The front of the chest is ironed all the way to the
+  // round of the ribs under it, and the body is then drawn most of the way back to that
+  const chestLo = hipMid[1] + 0.35 * torsoH, chestHi = hipMid[1] + 0.9 * torsoH;
+  const front = shirt.filter((v) => pos[v * 3 + 2] > hipMid[2] && pos[v * 3 + 1] > chestLo && pos[v * 3 + 1] < chestHi);
+  if (womanly > 0 && front.length) {
+    const was = front.map((v) => [pos[v * 3], pos[v * 3 + 1], pos[v * 3 + 2]]);
+    iron(front, 160, [0, 1, 2]);
+    const k = 1 - HOLD * womanly;
+    front.forEach((v, i) => { for (let c = 0; c < 3; c++) pos[v * 3 + c] += (was[i][c] - pos[v * 3 + c]) * k; });
   }
   iron(dressed, 8, [0, 2]);
   iron(shirt, 3, [0, 1, 2]);
@@ -450,7 +453,7 @@ function fitBody(d: Data, shape: BodyShape): Fit {
 /* ---------- drawing ---------- */
 
 export interface HumanColors {
-  skin: number[]; top: number[]; topFemale: number[]; bottom: number[]; hair: number[]; hot: number[]; iron: number[];
+  body: number[]; top: number[]; topFemale: number[]; bottom: number[]; hair: number[]; hot: number[]; iron: number[];
   shadow: number;
 }
 
@@ -470,29 +473,43 @@ void main(){
 
 const FRAG = `
 precision mediump float;
-uniform vec3 uSkin, uTop, uBottom, uHair, uHot, uIron; uniform float uShadow; uniform float uShadowA;
+uniform vec3 uBody, uTop, uBottom, uHair, uHot, uIron; uniform float uShadow; uniform float uShadowA;
 varying vec3 vN; varying float vTint; varying vec3 vCloth; varying float vKind;
 void main(){
   if (uShadow > 0.5) { gl_FragColor = vec4(0.0, 0.0, 0.0, uShadowA); return; }
-  vec3 base = uSkin;
-  float gloss = 0.22;
-  if (vKind > 3.5) { base = uIron; gloss = 0.5; }
-  else if (vKind > 2.5) { base = uHair; gloss = 0.08; }
-  else if (vKind > 1.5) base = vec3(0.13, 0.09, 0.07);
-  else if (vKind > 0.5) base = vec3(0.94);
-  else if (vCloth.x > 0.0) { base = uBottom; gloss = 0.05; }
-  else if (vCloth.y > 0.0) { base = uTop; gloss = 0.05; }
-  else if (vCloth.z > 0.0) { base = uHair; gloss = 0.08; }
-  // working muscles: a clear band of colour, not a wash that muddies the clothes
-  base = mix(base, uHot, smoothstep(0.3, 0.7, vTint) * 0.82);
+  // a dressed mannequin: the body is one matte material with no skin tone and no painted face, so it
+  // never pretends to be a person; the clothes, the hair, the weights and the working muscles have colour
+  float iron = step(3.5, vKind);
+  vec3 base = uBody;
+  float gloss = 0.16;
+  // a working muscle shows fully on the bare body and as a tint through the clothes
+  float show = 0.92;
+  if (iron > 0.5) { base = uIron; gloss = 0.55; }
+  else if (vKind > 2.5 || vCloth.z > 0.0) { base = uHair; gloss = 0.1; show = 0.0; }
+  else if (vKind < 0.5 && vCloth.x > 0.0) { base = uBottom; gloss = 0.04; show = 0.5; }
+  else if (vKind < 0.5 && vCloth.y > 0.0) { base = uTop; gloss = 0.04; show = 0.5; }
+  // light is added up in linear space and turned back at the end, so shade falls off softly
+  vec3 alb = base * base;
+  vec3 hot = uHot * uHot;
+  float work = smoothstep(0.3, 0.7, vTint) * show;
+  alb = mix(alb, hot, work);
   vec3 n = normalize(vN);
   vec3 key = normalize(vec3(-0.4, 0.75, 0.55));
   float d = dot(n, key);
-  float lit = 0.38 + 0.5 * max(d, 0.0) + 0.12 * (d * 0.5 + 0.5) + 0.1 * max(dot(n, normalize(vec3(0.7, 0.1, 0.4))), 0.0);
+  // the body carries light a little way round its form; iron cuts off clean
+  float wrap = 0.25 * (1.0 - iron);
+  float dif = max((d + wrap) / (1.0 + wrap), 0.0);
+  // cool light from above, warm bounce from the floor
+  vec3 amb = mix(vec3(0.15, 0.12, 0.11), vec3(0.26, 0.29, 0.35), n.y * 0.5 + 0.5);
+  float fill = 0.14 * max(dot(n, normalize(vec3(0.7, 0.1, 0.4))), 0.0);
+  vec3 col = alb * (amb + vec3(1.0, 0.96, 0.9) * dif + fill);
   vec3 h = normalize(key + vec3(0.0, 0.0, 1.0));
-  float spec = pow(max(dot(n, h), 0.0), 24.0) * gloss;
-  float rim = pow(1.0 - max(n.z, 0.0), 3.0) * 0.1;
-  gl_FragColor = vec4(base * lit + spec + rim, 1.0);
+  col += pow(max(dot(n, h), 0.0), mix(14.0, 48.0, gloss * 1.8)) * gloss * step(0.0, d);
+  // a light behind the figure picks out its edge against the backdrop
+  float edge = pow(1.0 - max(n.z, 0.0), 3.0);
+  col += vec3(1.0, 0.94, 0.88) * edge * (0.04 + 0.16 * max(n.y * 0.7 + n.x * 0.5, 0.0));
+  col += hot * work * edge * 0.35;
+  gl_FragColor = vec4(sqrt(min(col, 1.0)), 1.0);
 }`;
 
 /** Floats per vertex in the buffer that changes every frame: position, normal, highlight. */
@@ -542,7 +559,7 @@ class Human {
     gl.linkProgram(prog);
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog) ?? 'link');
     gl.useProgram(prog);
-    for (const n of ['uRot', 'uProj', 'uCam', 'uShadow', 'uShadowA', 'uSkin', 'uTop', 'uBottom', 'uHair', 'uHot', 'uIron'])
+    for (const n of ['uRot', 'uProj', 'uCam', 'uShadow', 'uShadowA', 'uBody', 'uTop', 'uBottom', 'uHair', 'uHot', 'uIron'])
       this.loc[n] = gl.getUniformLocation(prog, n);
     for (const n of ['aPos', 'aNrm', 'aTint', 'aCloth', 'aKind']) this.at[n] = gl.getAttribLocation(prog, n);
 
@@ -850,7 +867,7 @@ class Human {
     gl.uniform4f(loc.uProj, (2 * cam.scale * cam.cam) / w, (2 * cam.scale * cam.cam) / h, (2 * cam.ox) / w - 1, 1 - (2 * cam.oy) / h);
     gl.uniform1f(loc.uCam, cam.cam);
     gl.uniform1f(loc.uShadowA, col.shadow);
-    gl.uniform3fv(loc.uSkin, col.skin);
+    gl.uniform3fv(loc.uBody, col.body);
     gl.uniform3fv(loc.uTop, f.female ? col.topFemale : col.top);
     gl.uniform3fv(loc.uBottom, col.bottom);
     gl.uniform3fv(loc.uHair, col.hair);

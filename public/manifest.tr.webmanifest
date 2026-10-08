@@ -1,15 +1,15 @@
 {
 	"name": "Fitora: Kişisel antrenman planı",
 	"short_name": "Fitora",
-	"description": "3D hareket eğitimiyle kişisel antrenman planı",
+	"description": "Sakatlığına göre hazırlanan antrenman planı; her hareket için daha yumuşak bir alternatif",
 	"lang": "tr",
 	"dir": "ltr",
 	"start_url": "/#/today",
 	"scope": "/",
 	"display": "standalone",
 	"orientation": "portrait",
-	"background_color": "#f4f5f8",
-	"theme_color": "#0c0e14",
+	"background_color": "#f5f6f4",
+	"theme_color": "#0a0f10",
 	"categories": [
 		"health",
 		"fitness",

@@ -523,11 +523,11 @@ export class Mannequin {
     const v = (n: string, fb: string) => cs.getPropertyValue(n).trim() || fb;
     const pal = this.palette();
     this.humanPal = {
-      skin: rgb(v('--hm-skin', '#d9a888'), [0.85, 0.66, 0.53]),
-      top: rgb(v('--hm-top', '#e8ecf1'), [0.91, 0.93, 0.95]),
-      topFemale: rgb(v('--hm-top-f', '#7fc8c2'), [0.5, 0.78, 0.76]),
-      bottom: rgb(v('--hm-bottom', '#27313f'), [0.15, 0.19, 0.25]),
-      hair: rgb(v('--hm-hair', '#2a211d'), [0.16, 0.13, 0.11]),
+      body: pal.body,
+      top: rgb(v('--hm-top', '#3f5f7d'), [0.25, 0.37, 0.49]),
+      topFemale: rgb(v('--hm-top-f', '#2a8c84'), [0.16, 0.55, 0.52]),
+      bottom: rgb(v('--hm-bottom', '#2b3238'), [0.17, 0.2, 0.22]),
+      hair: rgb(v('--hm-hair', '#2b2420'), [0.17, 0.14, 0.13]),
       hot: pal.hot,
       iron: pal.iron,
       shadow: pal.dark ? 0.4 : 0.16,

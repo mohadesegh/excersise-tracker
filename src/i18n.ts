@@ -3,21 +3,21 @@ export type Locale = "fa" | "en" | "tr";
 export const appMeta = {
 	fa: {
 		appName: "فیتورا",
-		browserTitle: "فیتورا | برنامه‌ی تمرینی شخصی",
+		browserTitle: "فیتورا | تمرین امن با آسیب‌دیدگی",
 		description:
-			"برنامه‌ی تمرینی شخصی در کمتر از یک دقیقه، با آموزش سه‌بعدی حرکت‌ها.",
+			"برنامه‌ی تمرینی که دور آسیب‌دیدگی‌ات ساخته می‌شود، با جایگزین ملایم‌تر برای هر حرکت و آموزش سه‌بعدی.",
 	},
 	en: {
 		appName: "Fitora",
-		browserTitle: "Fitora | Personal workout plan",
+		browserTitle: "Fitora | Safe training with an injury",
 		description:
-			"Personal workout plan in under a minute with 3D movement coaching.",
+			"A workout plan built around your injury, with a gentler alternative for every move and 3D coaching.",
 	},
 	tr: {
 		appName: "Fitora",
-		browserTitle: "Fitora | Kişisel antrenman planı",
+		browserTitle: "Fitora | Sakatlıkla güvenli antrenman",
 		description:
-			"Bir dakikadan kısa sürede 3D hareket eğitimiyle kişisel antrenman planı.",
+			"Sakatlığına göre hazırlanan antrenman planı; her hareket için daha yumuşak bir alternatif ve 3D eğitim.",
 	},
 } as const;
 
@@ -90,10 +90,10 @@ export const i18n = {
 		selectProblem: "جایی از بدنت اذیتت می‌کند؟",
 		selectProblemHint: "حرکت‌های پرفشار برای آن ناحیه کنار گذاشته می‌شوند.",
 		noIssue: "نه، مشکلی ندارم",
-		welcomeTitle: "برنامه‌ی تمرینیِ مخصوص خودت، در کمتر از یک دقیقه.",
+		welcomeTitle: "با آسیب‌دیدگی هم می‌شود امن تمرین کرد.",
 		welcomeLead:
-			"هفت سؤال کوتاه جواب بده؛ برنامه‌ای می‌گیری که با بدن، وقت و وسایلت جور است. هر حرکت را سه‌بعدی و از هر زاویه ببین.",
-		freeNote: "رایگان، بدون ثبت‌نام",
+			"روی بدن سه‌بعدی نشان بده کجایت درد می‌کند؛ برنامه‌ات دور همان ساخته می‌شود. هر حرکت تمرینی برای درد زانو، کمر یا شانه یک جایگزین ملایم‌تر دارد.",
+		freeNote: "رایگان، بدون ثبت‌نام. راهنمایی عمومی است، نه تشخیص پزشکی.",
 		hello: "سلام",
 		profileGreet: "سلام",
 		build: "در حال ساختن برنامه‌ات…",
@@ -113,10 +113,10 @@ export const i18n = {
 		selectProblem: "Where does your body hurt?",
 		selectProblemHint: "High-impact moves for that area are skipped.",
 		noIssue: "No, I have no issues",
-		welcomeTitle: "Your personalized workout plan in under a minute.",
+		welcomeTitle: "Train safely, even with an injury.",
 		welcomeLead:
-			"Answer seven short questions and get a program that fits your body, schedule, and gear. See every move in 3D from every angle.",
-		freeNote: "Free, no sign-up required",
+			"Mark where it hurts on a 3D body and get a workout plan built around it. Every training move has a gentler alternative for a sore knee, back or shoulder.",
+		freeNote: "Free, no sign-up required. General guidance, not a medical diagnosis.",
 		hello: "Hi",
 		profileGreet: "Hi",
 		build: "Building your plan…",
@@ -136,11 +136,10 @@ export const i18n = {
 		selectProblem: "Vücudunuzun neresi rahatsız ediyor?",
 		selectProblemHint: "Bu bölgede yüksek etkili hareketler atlanır.",
 		noIssue: "Hayır, sorunum yok",
-		welcomeTitle:
-			"Bir dakikadan kısa sürede kişiselleştirilmiş antrenman planın.",
+		welcomeTitle: "Sakatlığın olsa bile güvenle antrenman yap.",
 		welcomeLead:
-			"Yedi kısa soruya cevap ver; vücuduna, zamanına ve ekipmanına uygun bir program al. Her hareketi 3D ve her açıdan gör.",
-		freeNote: "Ücretsiz, kayıt gerekmez",
+			"Ağrıyan yeri 3D vücudunda işaretle; programın ona göre hazırlansın. Her antrenman hareketinin diz, bel veya omuz ağrısı için daha yumuşak bir alternatifi var.",
+		freeNote: "Ücretsiz, kayıt gerekmez. Genel bir rehberdir, tıbbi teşhis değildir.",
 		hello: "Merhaba",
 		profileGreet: "Merhaba",
 		build: "Planın hazırlanıyor…",
